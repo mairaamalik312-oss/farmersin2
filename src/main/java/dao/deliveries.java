@@ -1,6 +1,6 @@
 package dao;
 
-import database.DatabaseConnection;
+import database.DBConnection;
 import model.Delivery;
 
 import java.sql.*;
@@ -9,25 +9,28 @@ import java.util.List;
 
 public class deliveries {
 
-    // 1. Create a Delivery record
+    // 1. Create a New Delivery Record
     public boolean addDelivery(Delivery delivery) throws SQLException {
         String query = "INSERT INTO deliveries (order_id, delivery_method, driver_name, driver_phone, " +
                 "vehicle_number, dispatch_date, delivery_date, delivery_status, delivery_proof, received_by) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
 
             stmt.setInt(1, delivery.getOrderId());
             stmt.setString(2, delivery.getDeliveryMethod());
-            stmt.setString(3, delivery.getDriverName());
-            stmt.setString(4, delivery.getDriverPhone());
-            stmt.setString(5, delivery.getVehicleNumber());
-            stmt.setTimestamp(6, delivery.getDispatchDate());
-            stmt.setTimestamp(7, delivery.getDeliveryDate());
+
+            setNullableString(stmt, 3, delivery.getDriverName());
+            setNullableString(stmt, 4, delivery.getDriverPhone());
+            setNullableString(stmt, 5, delivery.getVehicleNumber());
+            setNullableTimestamp(stmt, 6, delivery.getDispatchDate());
+            setNullableTimestamp(stmt, 7, delivery.getDeliveryDate());
+
             stmt.setString(8, delivery.getDeliveryStatus() != null ? delivery.getDeliveryStatus() : "PENDING");
-            stmt.setString(9, delivery.getDeliveryProof());
-            stmt.setString(10, delivery.getReceivedBy());
+
+            setNullableString(stmt, 9, delivery.getDeliveryProof());
+            setNullableString(stmt, 10, delivery.getReceivedBy());
 
             int affectedRows = stmt.executeUpdate();
             if (affectedRows > 0) {
@@ -42,11 +45,11 @@ public class deliveries {
         return false;
     }
 
-    // 2. Get Delivery by Delivery ID
+    // 2. Get Delivery Record by Delivery ID
     public Delivery getDeliveryById(int deliveryId) throws SQLException {
         String query = "SELECT * FROM deliveries WHERE delivery_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, deliveryId);
@@ -59,11 +62,11 @@ public class deliveries {
         return null;
     }
 
-    // 3. Get Delivery by Order ID (Unique Constraint: 1 Order has 1 Delivery)
+    // 3. Get Delivery Record by Order ID (1:1 Relationship)
     public Delivery getDeliveryByOrderId(int orderId) throws SQLException {
         String query = "SELECT * FROM deliveries WHERE order_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, orderId);
@@ -76,50 +79,70 @@ public class deliveries {
         return null;
     }
 
-    // 4. Update Driver and Dispatch details (When order is dispatched)
-    public boolean updateDispatchInfo(int deliveryId, String driverName, String driverPhone,
-                                      String vehicleNumber, Timestamp dispatchDate) throws SQLException {
-        String query = "UPDATE deliveries SET driver_name = ?, driver_phone = ?, vehicle_number = ?, " +
-                "dispatch_date = ?, delivery_status = 'DISPATCHED' WHERE delivery_id = ?";
+    // 4. Update Driver / Vehicle Logistics Information
+    public boolean updateLogisticsInfo(int deliveryId, String driverName, String driverPhone, String vehicleNumber) throws SQLException {
+        String query = "UPDATE deliveries SET driver_name = ?, driver_phone = ?, vehicle_number = ? WHERE delivery_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
-            stmt.setString(1, driverName);
-            stmt.setString(2, driverPhone);
-            stmt.setString(3, vehicleNumber);
-            stmt.setTimestamp(4, dispatchDate);
-            stmt.setInt(5, deliveryId);
+            setNullableString(stmt, 1, driverName);
+            setNullableString(stmt, 2, driverPhone);
+            setNullableString(stmt, 3, vehicleNumber);
+            stmt.setInt(4, deliveryId);
 
             return stmt.executeUpdate() > 0;
         }
     }
 
-    // 5. Update Status and Proof upon Delivery completion/failure
-    public boolean updateDeliveryStatus(int deliveryId, String status, Timestamp deliveryDate,
-                                        String deliveryProof, String receivedBy) throws SQLException {
-        String query = "UPDATE deliveries SET delivery_status = ?, delivery_date = ?, " +
+    // 5. Mark Delivery as Dispatched
+    public boolean markAsDispatched(int deliveryId) throws SQLException {
+        String query = "UPDATE deliveries SET delivery_status = 'DISPATCHED', dispatch_date = CURRENT_TIMESTAMP WHERE delivery_id = ?";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query)) {
+
+            stmt.setInt(1, deliveryId);
+            return stmt.executeUpdate() > 0;
+        }
+    }
+
+    // 6. Mark Delivery as Complete (Delivered)
+    public boolean markAsDelivered(int deliveryId, String deliveryProof, String receivedBy) throws SQLException {
+        String query = "UPDATE deliveries SET delivery_status = 'DELIVERED', delivery_date = CURRENT_TIMESTAMP, " +
                 "delivery_proof = ?, received_by = ? WHERE delivery_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query)) {
+
+            setNullableString(stmt, 1, deliveryProof);
+            setNullableString(stmt, 2, receivedBy);
+            stmt.setInt(3, deliveryId);
+
+            return stmt.executeUpdate() > 0;
+        }
+    }
+
+    // 7. Generic Delivery Status Update (e.g., IN_TRANSIT, FAILED)
+    public boolean updateStatus(int deliveryId, String status) throws SQLException {
+        String query = "UPDATE deliveries SET delivery_status = ? WHERE delivery_id = ?";
+
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setString(1, status);
-            stmt.setTimestamp(2, deliveryDate);
-            stmt.setString(3, deliveryProof);
-            stmt.setString(4, receivedBy);
-            stmt.setInt(5, deliveryId);
+            stmt.setInt(2, deliveryId);
 
             return stmt.executeUpdate() > 0;
         }
     }
 
-    // 6. Get Deliveries by Status (Useful for logistics tracking)
+    // 8. Get Deliveries Filtered by Status
     public List<Delivery> getDeliveriesByStatus(String status) throws SQLException {
         List<Delivery> list = new ArrayList<>();
-        String query = "SELECT * FROM deliveries WHERE delivery_status = ?";
+        String query = "SELECT * FROM deliveries WHERE delivery_status = ? ORDER BY delivery_id DESC";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setString(1, status);
@@ -132,32 +155,37 @@ public class deliveries {
         return list;
     }
 
-    // 7. Delete Delivery
-    public boolean deleteDelivery(int deliveryId) throws SQLException {
-        String query = "DELETE FROM deliveries WHERE delivery_id = ?";
+    // Helper: Map ResultSet to Delivery Object
+    private Delivery mapResultSetToDelivery(ResultSet rs) throws SQLException {
+        Delivery d = new Delivery();
+        d.setDeliveryId(rs.getInt("delivery_id"));
+        d.setOrderId(rs.getInt("order_id"));
+        d.setDeliveryMethod(rs.getString("delivery_method"));
+        d.setDriverName(rs.getString("driver_name"));
+        d.setDriverPhone(rs.getString("driver_phone"));
+        d.setVehicleNumber(rs.getString("vehicle_number"));
+        d.setDispatchDate(rs.getTimestamp("dispatch_date"));
+        d.setDeliveryDate(rs.getTimestamp("delivery_date"));
+        d.setDeliveryStatus(rs.getString("delivery_status"));
+        d.setDeliveryProof(rs.getString("delivery_proof"));
+        d.setReceivedBy(rs.getString("received_by"));
+        return d;
+    }
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(query)) {
-
-            stmt.setInt(1, deliveryId);
-            return stmt.executeUpdate() > 0;
+    // Null-safe setter helpers
+    private void setNullableString(PreparedStatement stmt, int index, String value) throws SQLException {
+        if (value != null) {
+            stmt.setString(index, value);
+        } else {
+            stmt.setNull(index, Types.VARCHAR);
         }
     }
 
-    // Helper method to map ResultSet row to Delivery Object
-    private Delivery mapResultSetToDelivery(ResultSet rs) throws SQLException {
-        Delivery delivery = new Delivery();
-        delivery.setDeliveryId(rs.getInt("delivery_id"));
-        delivery.setOrderId(rs.getInt("order_id"));
-        delivery.setDeliveryMethod(rs.getString("delivery_method"));
-        delivery.setDriverName(rs.getString("driver_name"));
-        delivery.setDriverPhone(rs.getString("driver_phone"));
-        delivery.setVehicleNumber(rs.getString("vehicle_number"));
-        delivery.setDispatchDate(rs.getTimestamp("dispatch_date"));
-        delivery.setDeliveryDate(rs.getTimestamp("delivery_date"));
-        delivery.setDeliveryStatus(rs.getString("delivery_status"));
-        delivery.setDeliveryProof(rs.getString("delivery_proof"));
-        delivery.setReceivedBy(rs.getString("received_by"));
-        return delivery;
+    private void setNullableTimestamp(PreparedStatement stmt, int index, Timestamp value) throws SQLException {
+        if (value != null) {
+            stmt.setTimestamp(index, value);
+        } else {
+            stmt.setNull(index, Types.TIMESTAMP);
+        }
     }
 }

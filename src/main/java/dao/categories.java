@@ -1,7 +1,7 @@
 package dao;
 
-import database.DatabaseConnection; // Adjust to your actual connection package
-import model.Category;               // Adjust to your actual model package
+import database.DBConnection;
+import model.Category;
 
 import java.sql.*;
 import java.util.ArrayList;
@@ -9,11 +9,11 @@ import java.util.List;
 
 public class categories {
 
-    // 1. Create a Category
+    // 1. Add a New Category
     public boolean addCategory(Category category) throws SQLException {
         String query = "INSERT INTO categories (category_name, description, is_active) VALUES (?, ?, ?)";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
 
             stmt.setString(1, category.getCategoryName());
@@ -39,11 +39,11 @@ public class categories {
         return false;
     }
 
-    // 2. Get Category by ID
+    // 2. Get Category by Category ID
     public Category getCategoryById(int categoryId) throws SQLException {
         String query = "SELECT * FROM categories WHERE category_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, categoryId);
@@ -56,47 +56,70 @@ public class categories {
         return null;
     }
 
-    // 3. Get All Categories
-    public List<Category> getAllCategories() throws SQLException {
-        List<Category> categoryList = new ArrayList<>();
-        String query = "SELECT * FROM categories";
+    // 3. Get Category by Name (Unique Key)
+    public Category getCategoryByName(String categoryName) throws SQLException {
+        String query = "SELECT * FROM categories WHERE category_name = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(query)) {
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query)) {
 
-            while (rs.next()) {
-                categoryList.add(mapResultSetToCategory(rs));
+            stmt.setString(1, categoryName);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return mapResultSetToCategory(rs);
+                }
             }
         }
-        return categoryList;
+        return null;
     }
 
-    // 4. Get Only Active Categories (Useful for buyer store views)
+    // 4. Get All Active Categories (Primary listing for buyers)
     public List<Category> getActiveCategories() throws SQLException {
-        List<Category> categoryList = new ArrayList<>();
-        String query = "SELECT * FROM categories WHERE is_active = 1";
+        List<Category> list = new ArrayList<>();
+        String query = "SELECT * FROM categories WHERE is_active = 1 ORDER BY category_name ASC";
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(query)) {
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query);
+             ResultSet rs = stmt.executeQuery()) {
 
             while (rs.next()) {
-                categoryList.add(mapResultSetToCategory(rs));
+                list.add(mapResultSetToCategory(rs));
             }
         }
-        return categoryList;
+        return list;
     }
 
-    // 5. Update Category
+    // 5. Get All Categories (Active and Inactive - for Admin panel)
+    public List<Category> getAllCategories() throws SQLException {
+        List<Category> list = new ArrayList<>();
+        String query = "SELECT * FROM categories ORDER BY category_name ASC";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query);
+             ResultSet rs = stmt.executeQuery()) {
+
+            while (rs.next()) {
+                list.add(mapResultSetToCategory(rs));
+            }
+        }
+        return list;
+    }
+
+    // 6. Update Category Information
     public boolean updateCategory(Category category) throws SQLException {
         String query = "UPDATE categories SET category_name = ?, description = ?, is_active = ? WHERE category_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setString(1, category.getCategoryName());
-            stmt.setString(2, category.getDescription());
+
+            if (category.getDescription() != null) {
+                stmt.setString(2, category.getDescription());
+            } else {
+                stmt.setNull(2, Types.VARCHAR);
+            }
+
             stmt.setBoolean(3, category.isActive());
             stmt.setInt(4, category.getCategoryId());
 
@@ -104,11 +127,25 @@ public class categories {
         }
     }
 
-    // 6. Delete Category
+    // 7. Toggle Active Status (Soft Disable/Enable)
+    public boolean setCategoryActiveStatus(int categoryId, boolean isActive) throws SQLException {
+        String query = "UPDATE categories SET is_active = ? WHERE category_id = ?";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query)) {
+
+            stmt.setBoolean(1, isActive);
+            stmt.setInt(2, categoryId);
+
+            return stmt.executeUpdate() > 0;
+        }
+    }
+
+    // 8. Delete Category
     public boolean deleteCategory(int categoryId) throws SQLException {
         String query = "DELETE FROM categories WHERE category_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, categoryId);
@@ -116,7 +153,7 @@ public class categories {
         }
     }
 
-    // Helper method to convert ResultSet row to Category Object
+    // Helper method to map ResultSet row to Category Object
     private Category mapResultSetToCategory(ResultSet rs) throws SQLException {
         Category category = new Category();
         category.setCategoryId(rs.getInt("category_id"));

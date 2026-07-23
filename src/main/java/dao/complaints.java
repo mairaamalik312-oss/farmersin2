@@ -1,6 +1,6 @@
 package dao;
 
-import database.DatabaseConnection; // Adjust this import to your database connection package
+import database.DBConnection;
 import model.Complaint;
 
 import java.sql.*;
@@ -11,10 +11,11 @@ public class complaints {
 
     // 1. Submit a New Complaint
     public boolean addComplaint(Complaint complaint) throws SQLException {
-        String query = "INSERT INTO complaints (order_id, submitted_by, against_user_id, complaint_type, description, evidence_path, complaint_status) " +
+        String query = "INSERT INTO complaints (order_id, submitted_by, against_user_id, " +
+                "complaint_type, description, evidence_path, complaint_status) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?)";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
 
             if (complaint.getOrderId() != null) {
@@ -49,11 +50,11 @@ public class complaints {
         return false;
     }
 
-    // 2. Get Complaint by ID
+    // 2. Get Complaint by Complaint ID
     public Complaint getComplaintById(int complaintId) throws SQLException {
         String query = "SELECT * FROM complaints WHERE complaint_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, complaintId);
@@ -66,28 +67,12 @@ public class complaints {
         return null;
     }
 
-    // 3. Get All Complaints (For Admin Dashboard)
-    public List<Complaint> getAllComplaints() throws SQLException {
-        List<Complaint> list = new ArrayList<>();
-        String query = "SELECT * FROM complaints ORDER BY created_at DESC";
-
-        try (Connection conn = DatabaseConnection.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(query)) {
-
-            while (rs.next()) {
-                list.add(mapResultSetToComplaint(rs));
-            }
-        }
-        return list;
-    }
-
-    // 4. Get Complaints Submitted By a Specific User
-    public List<Complaint> getComplaintsBySubmitter(int userId) throws SQLException {
+    // 3. Get Complaints Submitted by a User
+    public List<Complaint> getComplaintsSubmittedBy(int userId) throws SQLException {
         List<Complaint> list = new ArrayList<>();
         String query = "SELECT * FROM complaints WHERE submitted_by = ? ORDER BY created_at DESC";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, userId);
@@ -100,38 +85,86 @@ public class complaints {
         return list;
     }
 
-    // 5. Admin Action: Resolve or Update Complaint Status & Response
-    public boolean updateComplaintStatus(int complaintId, String status, String adminResponse) throws SQLException {
-        String query = "UPDATE complaints SET complaint_status = ?, admin_response = ?, " +
-                "resolved_at = CASE WHEN ? IN ('RESOLVED', 'REJECTED') THEN CURRENT_TIMESTAMP ELSE resolved_at END " +
-                "WHERE complaint_id = ?";
+    // 4. Get Complaints Filed Against a User
+    public List<Complaint> getComplaintsAgainstUser(int userId) throws SQLException {
+        List<Complaint> list = new ArrayList<>();
+        String query = "SELECT * FROM complaints WHERE against_user_id = ? ORDER BY created_at DESC";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query)) {
+
+            stmt.setInt(1, userId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    list.add(mapResultSetToComplaint(rs));
+                }
+            }
+        }
+        return list;
+    }
+
+    // 5. Get Complaints Associated with an Order
+    public List<Complaint> getComplaintsByOrderId(int orderId) throws SQLException {
+        List<Complaint> list = new ArrayList<>();
+        String query = "SELECT * FROM complaints WHERE order_id = ? ORDER BY created_at DESC";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query)) {
+
+            stmt.setInt(1, orderId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    list.add(mapResultSetToComplaint(rs));
+                }
+            }
+        }
+        return list;
+    }
+
+    // 6. Get Complaints Filtered by Status (For Admin Queue)
+    public List<Complaint> getComplaintsByStatus(String status) throws SQLException {
+        List<Complaint> list = new ArrayList<>();
+        String query = "SELECT * FROM complaints WHERE complaint_status = ? ORDER BY created_at ASC";
+
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setString(1, status);
-
-            if (adminResponse != null) {
-                stmt.setString(2, adminResponse);
-            } else {
-                stmt.setNull(2, Types.VARCHAR);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    list.add(mapResultSetToComplaint(rs));
+                }
             }
+        }
+        return list;
+    }
 
-            stmt.setString(3, status);
-            stmt.setInt(4, complaintId);
+    // 7. Resolve or Reject Complaint (Admin Action)
+    public boolean resolveComplaint(int complaintId, String newStatus, String adminResponse) throws SQLException {
+        String query = "UPDATE complaints SET complaint_status = ?, admin_response = ?, " +
+                "resolved_at = CURRENT_TIMESTAMP WHERE complaint_id = ?";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query)) {
+
+            stmt.setString(1, newStatus);
+            stmt.setString(2, adminResponse);
+            stmt.setInt(3, complaintId);
 
             return stmt.executeUpdate() > 0;
         }
     }
 
-    // 6. Delete Complaint
-    public boolean deleteComplaint(int complaintId) throws SQLException {
-        String query = "DELETE FROM complaints WHERE complaint_id = ?";
+    // 8. Update Status (e.g., Move to UNDER_REVIEW)
+    public boolean updateStatus(int complaintId, String newStatus) throws SQLException {
+        String query = "UPDATE complaints SET complaint_status = ? WHERE complaint_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
-            stmt.setInt(1, complaintId);
+            stmt.setString(1, newStatus);
+            stmt.setInt(2, complaintId);
+
             return stmt.executeUpdate() > 0;
         }
     }
@@ -142,11 +175,7 @@ public class complaints {
         complaint.setComplaintId(rs.getInt("complaint_id"));
 
         int orderId = rs.getInt("order_id");
-        if (!rs.wasNull()) {
-            complaint.setOrderId(orderId);
-        } else {
-            complaint.setOrderId(null);
-        }
+        complaint.setOrderId(rs.wasNull() ? null : orderId);
 
         complaint.setSubmittedBy(rs.getInt("submitted_by"));
         complaint.setAgainstUserId(rs.getInt("against_user_id"));
@@ -157,7 +186,6 @@ public class complaints {
         complaint.setAdminResponse(rs.getString("admin_response"));
         complaint.setCreatedAt(rs.getTimestamp("created_at"));
         complaint.setResolvedAt(rs.getTimestamp("resolved_at"));
-
         return complaint;
     }
 }

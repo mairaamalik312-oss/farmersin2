@@ -1,6 +1,6 @@
 package dao;
 
-import database.DatabaseConnection; // Adjust this import based on your database connection package
+import database.DBConnection;
 import model.Conversation;
 
 import java.sql.*;
@@ -9,11 +9,11 @@ import java.util.List;
 
 public class conversations {
 
-    // 1. Create a new Conversation
-    public boolean createConversation(Conversation conversation) throws SQLException {
+    // 1. Create a New Conversation
+    public boolean addConversation(Conversation conversation) throws SQLException {
         String query = "INSERT INTO conversations (buyer_id, supplier_id, order_id) VALUES (?, ?, ?)";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
 
             stmt.setInt(1, conversation.getBuyerId());
@@ -42,7 +42,7 @@ public class conversations {
     public Conversation getConversationById(int conversationId) throws SQLException {
         String query = "SELECT * FROM conversations WHERE conversation_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, conversationId);
@@ -55,11 +55,12 @@ public class conversations {
         return null;
     }
 
-    // 3. Find existing conversation between Buyer and Supplier (without specific order)
+    // 3. Get Existing Conversation Between Buyer and Supplier
     public Conversation getConversationByBuyerAndSupplier(int buyerId, int supplierId) throws SQLException {
-        String query = "SELECT * FROM conversations WHERE buyer_id = ? AND supplier_id = ? AND order_id IS NULL";
+        String query = "SELECT * FROM conversations WHERE buyer_id = ? AND supplier_id = ? " +
+                "ORDER BY created_at DESC LIMIT 1";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, buyerId);
@@ -73,29 +74,24 @@ public class conversations {
         return null;
     }
 
-    // 4. Get Conversation linked to a specific Order
-    public Conversation getConversationByOrderId(int orderId) throws SQLException {
-        String query = "SELECT * FROM conversations WHERE order_id = ?";
-
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(query)) {
-
-            stmt.setInt(1, orderId);
-            try (ResultSet rs = stmt.executeQuery()) {
-                if (rs.next()) {
-                    return mapResultSetToConversation(rs);
-                }
+    // 4. Get or Create Conversation (Helper for opening direct chat)
+    public Conversation getOrCreateConversation(int buyerId, int supplierId, Integer orderId) throws SQLException {
+        Conversation conv = getConversationByBuyerAndSupplier(buyerId, supplierId);
+        if (conv == null) {
+            conv = new Conversation(buyerId, supplierId, orderId);
+            if (addConversation(conv)) {
+                return getConversationById(conv.getConversationId());
             }
         }
-        return null;
+        return conv;
     }
 
-    // 5. Get all Conversations for a specific Buyer
+    // 5. Get All Conversations for a Specific Buyer
     public List<Conversation> getConversationsByBuyerId(int buyerId) throws SQLException {
         List<Conversation> list = new ArrayList<>();
         String query = "SELECT * FROM conversations WHERE buyer_id = ? ORDER BY created_at DESC";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, buyerId);
@@ -108,12 +104,12 @@ public class conversations {
         return list;
     }
 
-    // 6. Get all Conversations for a specific Supplier
+    // 6. Get All Conversations for a Specific Supplier
     public List<Conversation> getConversationsBySupplierId(int supplierId) throws SQLException {
         List<Conversation> list = new ArrayList<>();
         String query = "SELECT * FROM conversations WHERE supplier_id = ? ORDER BY created_at DESC";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, supplierId);
@@ -126,11 +122,28 @@ public class conversations {
         return list;
     }
 
-    // 7. Delete Conversation
+    // 7. Get Conversation Linked to a Specific Order ID
+    public Conversation getConversationByOrderId(int orderId) throws SQLException {
+        String query = "SELECT * FROM conversations WHERE order_id = ?";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(query)) {
+
+            stmt.setInt(1, orderId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return mapResultSetToConversation(rs);
+                }
+            }
+        }
+        return null;
+    }
+
+    // 8. Delete Conversation
     public boolean deleteConversation(int conversationId) throws SQLException {
         String query = "DELETE FROM conversations WHERE conversation_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
             stmt.setInt(1, conversationId);
@@ -146,11 +159,7 @@ public class conversations {
         conversation.setSupplierId(rs.getInt("supplier_id"));
 
         int orderId = rs.getInt("order_id");
-        if (!rs.wasNull()) {
-            conversation.setOrderId(orderId);
-        } else {
-            conversation.setOrderId(null);
-        }
+        conversation.setOrderId(rs.wasNull() ? null : orderId);
 
         conversation.setCreatedAt(rs.getTimestamp("created_at"));
         return conversation;
