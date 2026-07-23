@@ -1,7 +1,7 @@
 package DAO;
 
-import database.DatabaseConnection;
-import model.Address;
+import database.DBConnection;
+import MODEL.Address;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,7 +13,7 @@ public class AddressDAO {
         String sql = "INSERT INTO addresses (user_id, address_type, address_line, city, area, postal_code, latitude, longitude, is_default) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
 
             pstmt.setInt(1, address.getUserId());
@@ -61,7 +61,7 @@ public class AddressDAO {
         List<Address> addresses = new ArrayList<>();
         String sql = "SELECT * FROM addresses WHERE user_id = ? ORDER BY is_default DESC, address_id DESC";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setInt(1, userId);
@@ -80,7 +80,7 @@ public class AddressDAO {
     public Address getAddressById(int addressId) {
         String sql = "SELECT * FROM addresses WHERE address_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setInt(1, addressId);
@@ -100,7 +100,7 @@ public class AddressDAO {
         String sql = "UPDATE addresses SET address_type = ?, address_line = ?, city = ?, area = ?, " +
                 "postal_code = ?, latitude = ?, longitude = ?, is_default = ? WHERE address_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn =DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setString(1, address.getAddressType());
@@ -125,7 +125,7 @@ public class AddressDAO {
         String clearDefaultSql = "UPDATE addresses SET is_default = FALSE WHERE user_id = ?";
         String setDefaultSql = "UPDATE addresses SET is_default = TRUE WHERE address_id = ? AND user_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection()) {
+        try (Connection conn = DBConnection.getConnection()) {
             conn.setAutoCommit(false); // Start transaction
 
             try (PreparedStatement clearStmt = conn.prepareStatement(clearDefaultSql);
@@ -155,7 +155,7 @@ public class AddressDAO {
     public boolean deleteAddress(int addressId) {
         String sql = "DELETE FROM addresses WHERE address_id = ?";
 
-        try (Connection conn = DatabaseConnection.getConnection();
+        try (Connection conn = DBConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setInt(1, addressId);
