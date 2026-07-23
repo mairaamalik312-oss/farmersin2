@@ -1,6 +1,6 @@
 package DAO;
 
-public class Admin {
+public class admin_logs {
     int id ;
     String name;
 }
