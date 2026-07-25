@@ -1,5 +1,4 @@
 package dao;
-
 import database.DBConnection;
 import model.PasswordResetToken;
 

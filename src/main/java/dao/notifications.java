@@ -1,12 +1,10 @@
 package dao;
-
 import database.DBConnection;
 import model.Notification;
 
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
-
 public class notifications {
 
     // 1. Create a new Notification
