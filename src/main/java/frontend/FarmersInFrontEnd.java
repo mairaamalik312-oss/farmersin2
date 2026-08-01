@@ -1,2001 +1,1735 @@
 package frontend;
 
+import services.*;
+import model.*;
+
 import javafx.application.Application;
-import javafx.application.Platform;
+import javafx.beans.property.SimpleObjectProperty;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.Cursor;
 import javafx.scene.Scene;
+import javafx.scene.Node;
+import javafx.scene.Cursor;
 import javafx.scene.control.*;
-import javafx.scene.effect.DropShadow;
 import javafx.scene.layout.*;
-import javafx.scene.paint.Color;
-import javafx.scene.text.Font;
-import javafx.scene.text.FontWeight;
-import javafx.beans.property.ReadOnlyStringWrapper;
-import javafx.concurrent.Task;
 import javafx.stage.Stage;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.LinkedHashMap;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.stream.Collectors;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.lang.reflect.InvocationTargetException;
 import java.math.BigDecimal;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.Optional;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.Supplier;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
+/**
+ * Frontend.java (JavaFX edition)
+ * -------------------------------
+ * A single-file JavaFX desktop client that drives your existing "services" package
+ * (UserService, ProductService, OrderService, ...) directly - no REST layer needed.
+ *
+ * HOW TO USE
+ *   1. Drop this file into your src folder (default package, next to "services", "dao", "model").
+ *   2. Make sure JavaFX is on your module/class path (IntelliJ: Project Structure > Libraries,
+ *      plus VM options like --module-path /path/to/javafx-sdk/lib --add-modules javafx.controls
+ *      if you're on a non-modular classpath project - IntelliJ's "Run/Debug Configuration" wizard
+ *      for JavaFX projects sets this up for you).
+ *   3. Make sure your DB connection (used inside the DAOs) is configured and reachable.
+ *   4. Run Frontend.main().
+ *
+ * IMPORTANT - PLEASE READ
+ *   Your model classes (User, Address, Product, Order, ...) weren't included in what you shared -
+ *   only the service layer. I inferred every getter/setter name from how each service method
+ *   uses it (e.g. address.getAddressLine(), order.setBuyerId(...)). If a real model class uses a
+ *   different name, you'll get a compile error on that one line - just rename the call to match.
+ *
+ *   There is no CartService / Cart model in what you gave me (only CartItemService, which
+ *   operates on an existing cartId). I treat "cartId == buyerId" as a simple stand-in so every
+ *   buyer has one running cart. Swap getOrCreateCartId(...) if you have a real carts table.
+ *
+ *   Login does a lookup by email and a direct string compare against passwordHash, since no
+ *   hashing/verification method was shown in UserService. Replace with real hash checking
+ *   (e.g. BCrypt.checkpw) before using this for anything real.
+ */
 public class FarmersInFrontEnd extends Application {
 
-    private Stage primaryStage;
-    private BorderPane dashboardRoot;
-    private VBox sidebar;
-    private StackPane contentArea;
-    private Label pageTitle;
-    private String currentRole = "ADMIN";
+    // ---- Services (all reused from your services package) -----------------
+    private final UserService userService = new UserService();
+    private final address addressService = new address();
+    private final CategoryService categoryService = new CategoryService();
+    private final SubcategoryService subcategoryService = new SubcategoryService();
+    private final ProductService productService = new ProductService();
+    private final SupplierProductService supplierProductService = new SupplierProductService();
+    private final buyerprofile buyerProfileService = new buyerprofile();
+    private final SupplierProfileService supplierProfileService = new SupplierProfileService();
+    private final CartItemService cartItemService = new CartItemService();
+    private final OrderService orderService = new OrderService();
+    private final service.OrderItemService orderItemService = new service.OrderItemService();
+    private final PaymentService paymentService = new PaymentService();
+    private final DeliveryService deliveryService = new DeliveryService();
+    private final ReviewService reviewService = new ReviewService();
+    private final ComplaintService complaintService = new ComplaintService();
+    private final ConversationService conversationService = new ConversationService();
+    private final MessageService messageService = new MessageService();
+    private final service.NotificationService notificationService = new service.NotificationService();
+    private final admin_logs adminLogService = new admin_logs();
+    private final MarketPriceService marketPriceService = new MarketPriceService();
+    private final RefundService refundService = new RefundService();
+    private final SeasonalAvailabilityService seasonalAvailabilityService = new SeasonalAvailabilityService();
 
-    // Professional FarmersIn theme
-    private static final String PRIMARY = "#1F7A3D";
-    private static final String PRIMARY_DARK = "#14532D";
-    private static final String PRIMARY_LIGHT = "#EAF6EE";
-    private static final String BACKGROUND = "#F4F7F5";
-    private static final String CARD = "#FFFFFF";
-    private static final String TEXT = "#1F2937";
-    private static final String MUTED = "#6B7280";
-    private static final String BORDER = "#E5E7EB";
-    private static final String WARNING = "#F59E0B";
-    private static final String DANGER = "#DC2626";
-    private static final String INFO = "#2563EB";
+    // ---- Session state ------------------------------------------------------
+    private User currentUser;
+    private BuyerProfile currentBuyerProfile;
+    private SupplierProfile currentSupplierProfile;
+    private Stage primaryStage;
+
+    public static void main(String[] args) {
+        launch(args);
+    }
 
     @Override
     public void start(Stage stage) {
         this.primaryStage = stage;
-
-        primaryStage.setTitle("FarmersIn");
-        primaryStage.setMinWidth(1100);
-        primaryStage.setMinHeight(700);
-        primaryStage.setWidth(1450);
-        primaryStage.setHeight(900);
-
-        showLoginScreen();
-        primaryStage.show();
-        primaryStage.centerOnScreen();
+        stage.setTitle("FarmersIn");
+        stage.setMinWidth(1120);
+        stage.setMinHeight(720);
+        stage.setScene(buildLoginScene());
+        stage.setMaximized(true);
+        stage.show();
     }
 
-    // =========================================================
-    // LOGIN SCREEN
-    // =========================================================
+    // =========================================================================
+    //  LOGIN / REGISTER
+    // =========================================================================
 
-    private void showLoginScreen() {
+    private Scene buildLoginScene() {
         BorderPane root = new BorderPane();
-        root.setStyle("-fx-background-color: " + BACKGROUND + ";");
+        root.getStyleClass().add("app-background");
 
-        VBox leftPanel = new VBox(24);
-        leftPanel.setAlignment(Pos.CENTER_LEFT);
-        leftPanel.setPadding(new Insets(70));
-        leftPanel.setPrefWidth(650);
-        leftPanel.setStyle(
-                "-fx-background-color: linear-gradient(to bottom right, " +
-                        PRIMARY_DARK + ", " + PRIMARY + ");"
-        );
+        VBox brand = new VBox(18);
+        brand.setAlignment(Pos.CENTER_LEFT);
+        brand.setPadding(new Insets(70));
+        brand.setPrefWidth(600);
 
-        Label logo = new Label("🌿  FarmersIn");
-        logo.setTextFill(Color.WHITE);
-        logo.setFont(Font.font("Arial", FontWeight.BOLD, 34));
+        Label badge = new Label("FARM TO BUSINESS");
+        badge.getStyleClass().add("brand-badge");
+        Label brandTitle = new Label("Fresh produce.\nTrusted suppliers.\nOne simple market.");
+        brandTitle.getStyleClass().add("brand-title");
+        brandTitle.setWrapText(true);
+        Label brandText = new Label("FarmersIn connects verified farmers and dairy suppliers with restaurants, shops and business buyers.");
+        brandText.getStyleClass().add("brand-copy");
+        brandText.setWrapText(true);
+        brandText.setMaxWidth(470);
 
-        Label heading = new Label("Fresh from farms,\ndirectly to your business.");
-        heading.setTextFill(Color.WHITE);
-        heading.setFont(Font.font("Arial", FontWeight.BOLD, 42));
+        HBox featureRow = new HBox(12,
+                featureChip("✓ Verified sellers"),
+                featureChip("✓ Fresh categories"),
+                featureChip("✓ Secure orders"));
+        featureRow.setAlignment(Pos.CENTER_LEFT);
+        brand.getChildren().addAll(badge, brandTitle, brandText, featureRow);
 
-        Label description = new Label(
-                "A trusted digital marketplace connecting buyers,\n" +
-                        "farmers and dairy suppliers across Pakistan."
-        );
-        description.setTextFill(Color.web("#DDEFE3"));
-        description.setFont(Font.font("Arial", 18));
-
-        VBox featureBox = new VBox(13);
-        featureBox.getChildren().addAll(
-                createLoginFeature("✓", "Verified suppliers"),
-                createLoginFeature("✓", "Fresh agricultural products"),
-                createLoginFeature("✓", "Secure orders and payments"),
-                createLoginFeature("✓", "Direct communication")
-        );
-
-        leftPanel.getChildren().addAll(logo, heading, description, featureBox);
-
-        VBox loginCard = new VBox(16);
-        loginCard.setAlignment(Pos.CENTER_LEFT);
-        loginCard.setPadding(new Insets(38));
-        loginCard.setMaxWidth(420);
-        loginCard.setStyle(cardStyle(18));
-        loginCard.setEffect(createShadow());
+        VBox card = new VBox(16);
+        card.getStyleClass().add("glass-card");
+        card.setPadding(new Insets(34));
+        card.setMaxWidth(430);
 
         Label welcome = new Label("Welcome back");
-        welcome.setFont(Font.font("Arial", FontWeight.BOLD, 28));
-        welcome.setTextFill(Color.web(TEXT));
+        welcome.getStyleClass().add("form-title");
+        Label subtitle = new Label("Sign in to continue to your FarmersIn workspace.");
+        subtitle.getStyleClass().add("muted-text");
+        subtitle.setWrapText(true);
 
-        Label signInText = new Label("Sign in to continue to FarmersIn");
-        signInText.setFont(Font.font("Arial", 14));
-        signInText.setTextFill(Color.web(MUTED));
+        TextField emailField = styledTextField("Email address");
+        PasswordField passwordField = new PasswordField();
+        passwordField.setPromptText("Password");
+        passwordField.getStyleClass().add("modern-field");
 
-        Label emailLabel = fieldLabel("Email address");
-        TextField emailField = createTextField("admin@gmail.com");
+        Button loginBtn = primaryButton("Log in");
+        loginBtn.setMaxWidth(Double.MAX_VALUE);
+        Button registerBtn = secondaryButton("Create buyer or supplier account");
+        registerBtn.setMaxWidth(Double.MAX_VALUE);
 
-        Label passwordLabel = fieldLabel("Password");
-        PasswordField passwordField = createPasswordField("admin123");
+        Label security = new Label("Admin accounts are created only in the database by the system administrator.");
+        security.getStyleClass().add("hint-text");
+        security.setWrapText(true);
 
-        Label roleLabel = fieldLabel("Account type");
-        ComboBox<String> roleBox = new ComboBox<>();
-        roleBox.getItems().addAll("ADMIN", "BUYER", "SUPPLIER");
-        roleBox.setValue("ADMIN");
-        roleBox.setMaxWidth(Double.MAX_VALUE);
-        roleBox.setPrefHeight(44);
-        roleBox.setStyle(inputStyle());
-
-        Label messageLabel = new Label();
-        messageLabel.setTextFill(Color.web(DANGER));
-        messageLabel.setWrapText(true);
-
-        Button loginButton = createPrimaryButton("Sign In");
-        loginButton.setMaxWidth(Double.MAX_VALUE);
-
-        Button registerButton = createSecondaryButton("Create New Account");
-        registerButton.setMaxWidth(Double.MAX_VALUE);
-
-        loginButton.setOnAction(event -> {
-            String email = emailField.getText().trim();
-            String password = passwordField.getText();
-            String role = roleBox.getValue();
-
-            if (email.isEmpty() || password.isEmpty() || role == null) {
-                messageLabel.setText("Please complete all fields.");
-                return;
-            }
-
-            if ("ADMIN".equals(role)) {
-                if (!email.equalsIgnoreCase("admin@gmail.com")
-                        || !password.equals("admin123")) {
-                    messageLabel.setText("Invalid admin email or password.");
-                    return;
+        loginBtn.setOnAction(e -> {
+            try {
+                User user = userService.getUserByEmail(emailField.getText().trim());
+                String entered = passwordField.getText();
+                if (user == null || user.getPasswordHash() == null || !user.getPasswordHash().equals(entered)) {
+                    throw new IllegalArgumentException("Incorrect email or password.");
                 }
+                onLoginSuccess(user);
+            } catch (Exception ex) {
+                showError(ex);
             }
-
-            currentRole = role;
-            showDashboard();
         });
+        passwordField.setOnAction(e -> loginBtn.fire());
+        registerBtn.setOnAction(e -> primaryStage.setScene(buildRegisterScene()));
 
-        registerButton.setOnAction(event -> showRegistrationScreen());
+        card.getChildren().addAll(welcome, subtitle, new Separator(), emailField, passwordField, loginBtn, registerBtn, security);
 
-        loginCard.getChildren().addAll(
-                welcome,
-                signInText,
-                createSpacer(5),
-                emailLabel,
-                emailField,
-                passwordLabel,
-                passwordField,
-                roleLabel,
-                roleBox,
-                messageLabel,
-                loginButton,
-                registerButton
-        );
+        StackPane cardHolder = new StackPane(card);
+        cardHolder.setPadding(new Insets(50));
+        root.setLeft(brand);
+        root.setCenter(cardHolder);
 
-        StackPane rightPanel = new StackPane(loginCard);
-        rightPanel.setPadding(new Insets(60));
-
-        root.setLeft(leftPanel);
-        root.setCenter(rightPanel);
-
-        primaryStage.setScene(new Scene(root));
+        Scene scene = new Scene(root, 1280, 800);
+        applyTheme(scene);
+        return scene;
     }
 
-    private HBox createLoginFeature(String icon, String text) {
-        Label iconLabel = new Label(icon);
-        iconLabel.setTextFill(Color.web("#A7F3D0"));
-        iconLabel.setFont(Font.font("Arial", FontWeight.BOLD, 18));
-
-        Label textLabel = new Label(text);
-        textLabel.setTextFill(Color.WHITE);
-        textLabel.setFont(Font.font("Arial", 16));
-
-        HBox row = new HBox(10, iconLabel, textLabel);
-        row.setAlignment(Pos.CENTER_LEFT);
-        return row;
-    }
-
-    // =========================================================
-    // REGISTRATION SCREEN
-    // =========================================================
-
-    private void showRegistrationScreen() {
+    private Scene buildRegisterScene() {
         BorderPane root = new BorderPane();
-        root.setStyle("-fx-background-color: " + BACKGROUND + ";");
+        root.getStyleClass().add("app-background");
 
-        HBox top = new HBox();
-        top.setAlignment(Pos.CENTER_LEFT);
-        top.setPadding(new Insets(20, 35, 20, 35));
-        top.setStyle("-fx-background-color: white; -fx-border-color: transparent transparent " + BORDER + " transparent;");
-
-        Label logo = new Label("🌿 FarmersIn");
-        logo.setFont(Font.font("Arial", FontWeight.BOLD, 26));
-        logo.setTextFill(Color.web(PRIMARY_DARK));
-
-        top.getChildren().add(logo);
-        root.setTop(top);
-
-        GridPane form = new GridPane();
-        form.setHgap(18);
-        form.setVgap(14);
-        form.setPadding(new Insets(36));
-        form.setMaxWidth(700);
-        form.setStyle(cardStyle(18));
-        form.setEffect(createShadow());
+        VBox card = new VBox(14);
+        card.getStyleClass().add("glass-card");
+        card.setPadding(new Insets(34));
+        card.setMaxWidth(520);
 
         Label title = new Label("Create your FarmersIn account");
-        title.setFont(Font.font("Arial", FontWeight.BOLD, 28));
-        title.setTextFill(Color.web(TEXT));
+        title.getStyleClass().add("form-title");
+        Label subtitle = new Label("Choose the role that matches your work. The admin will verify your profile.");
+        subtitle.getStyleClass().add("muted-text");
+        subtitle.setWrapText(true);
 
-        Label subtitle = new Label("Register as a buyer or supplier");
-        subtitle.setTextFill(Color.web(MUTED));
-
-        TextField nameField = createTextField("Full name");
-        TextField emailField = createTextField("Email address");
-        PasswordField passwordField = createPasswordField("Password");
-        TextField phoneField = createTextField("Phone number");
-
-        ComboBox<String> roleBox = new ComboBox<>();
-        roleBox.getItems().addAll("BUYER", "SUPPLIER");
-        roleBox.setPromptText("Select account type");
-        roleBox.setPrefHeight(44);
+        TextField nameField = styledTextField("Full name");
+        TextField emailField = styledTextField("Email address");
+        PasswordField passwordField = new PasswordField();
+        passwordField.setPromptText("Password");
+        passwordField.getStyleClass().add("modern-field");
+        TextField phoneField = styledTextField("Phone (optional)");
+        ComboBox<String> roleBox = new ComboBox<>(FXCollections.observableArrayList("BUYER", "SUPPLIER"));
+        roleBox.getSelectionModel().selectFirst();
         roleBox.setMaxWidth(Double.MAX_VALUE);
-        roleBox.setStyle(inputStyle());
+        roleBox.getStyleClass().add("modern-field");
 
-        TextField cityField = createTextField("City");
-        TextArea addressArea = new TextArea();
-        addressArea.setPromptText("Complete address");
-        addressArea.setPrefRowCount(3);
-        addressArea.setStyle(inputStyle());
+        Button createBtn = primaryButton("Create account");
+        Button backBtn = secondaryButton("Back to login");
+        createBtn.setMaxWidth(Double.MAX_VALUE);
+        backBtn.setMaxWidth(Double.MAX_VALUE);
 
-        Label message = new Label();
-        message.setWrapText(true);
-
-        Button register = createPrimaryButton("Create Account");
-        Button back = createSecondaryButton("Back to Login");
-
-        register.setMaxWidth(Double.MAX_VALUE);
-        back.setMaxWidth(Double.MAX_VALUE);
-
-        register.setOnAction(event -> {
-            if (nameField.getText().trim().isEmpty()
-                    || emailField.getText().trim().isEmpty()
-                    || passwordField.getText().isEmpty()
-                    || phoneField.getText().trim().isEmpty()
-                    || roleBox.getValue() == null
-                    || cityField.getText().trim().isEmpty()) {
-
-                message.setTextFill(Color.web(DANGER));
-                message.setText("Please complete all required fields.");
-                return;
+        createBtn.setOnAction(e -> {
+            try {
+                if (nameField.getText().isBlank() || emailField.getText().isBlank() || passwordField.getText().isBlank()) {
+                    throw new IllegalArgumentException("Name, email and password are required.");
+                }
+                User user = new User();
+                user.setFullName(nameField.getText().trim());
+                user.setEmail(emailField.getText().trim());
+                user.setPasswordHash(passwordField.getText());
+                user.setPhone(phoneField.getText().isBlank() ? null : phoneField.getText().trim());
+                user.setRole(roleBox.getValue());
+                userService.addUser(user);
+                info("Account created. Your profile will remain pending until approved by an admin.");
+                primaryStage.setScene(buildLoginScene());
+            } catch (Exception ex) {
+                showError(ex);
             }
+        });
+        backBtn.setOnAction(e -> primaryStage.setScene(buildLoginScene()));
 
-            message.setTextFill(Color.web(PRIMARY));
-            message.setText("Account created successfully. You may now return to login.");
+        card.getChildren().addAll(title, subtitle, new Separator(), nameField, emailField, passwordField,
+                phoneField, new Label("Account type"), roleBox, createBtn, backBtn);
+        StackPane holder = new StackPane(card);
+        holder.setPadding(new Insets(50));
+        root.setCenter(holder);
+
+        Scene scene = new Scene(root, 1280, 800);
+        applyTheme(scene);
+        return scene;
+    }
+
+    private void onLoginSuccess(User user) {
+        this.currentUser = user;
+        try {
+            if ("BUYER".equalsIgnoreCase(user.getRole())) {
+                try { currentBuyerProfile = buyerProfileService.getBuyerByUserId(user.getUserId()); }
+                catch (Exception ignore) { currentBuyerProfile = null; }
+            } else if ("SUPPLIER".equalsIgnoreCase(user.getRole())) {
+                try { currentSupplierProfile = supplierProfileService.getSupplierByUserId(user.getUserId()); }
+                catch (Exception ignore) { currentSupplierProfile = null; }
+            }
+        } catch (Exception ignore) { /* profile may not exist yet - that's fine */ }
+
+        primaryStage.setScene(buildDashboardScene(user.getRole().toUpperCase()));
+    }
+
+    // =========================================================================
+    //  DASHBOARD SHELL (role switcher + tabs)
+    // =========================================================================
+
+    private Scene buildDashboardScene(String initialViewRole) {
+        BorderPane shell = new BorderPane();
+        shell.getStyleClass().add("dashboard-background");
+
+        VBox sidebar = new VBox(10);
+        sidebar.getStyleClass().add("sidebar");
+        sidebar.setPadding(new Insets(26, 18, 24, 18));
+        sidebar.setPrefWidth(250);
+
+        Label logo = new Label("FarmersIn");
+        logo.getStyleClass().add("sidebar-logo");
+        Label role = new Label(currentUser.getRole().toUpperCase() + " WORKSPACE");
+        role.getStyleClass().add("sidebar-role");
+
+        VBox navigation = new VBox(7);
+        VBox.setVgrow(navigation, Priority.ALWAYS);
+
+        StackPane content = new StackPane();
+        content.setPadding(new Insets(22));
+
+        Map<String, Supplier<Node>> views = buildViewsForRole(currentUser.getRole().toUpperCase());
+        if (views.isEmpty()) {
+            content.getChildren().setAll(new Label("No workspace is available for this account role."));
+        } else {
+            final Button[] selected = new Button[1];
+            views.forEach((name, supplier) -> {
+                Button nav = new Button(name);
+                nav.getStyleClass().add("nav-button");
+                nav.setMaxWidth(Double.MAX_VALUE);
+                nav.setAlignment(Pos.CENTER_LEFT);
+                nav.setOnAction(e -> {
+                    if (selected[0] != null) selected[0].getStyleClass().remove("nav-button-selected");
+                    if (!nav.getStyleClass().contains("nav-button-selected")) nav.getStyleClass().add("nav-button-selected");
+                    selected[0] = nav;
+                    Node view = supplier.get();
+                    view.getStyleClass().add("content-card");
+                    content.getChildren().setAll(view);
+                });
+                navigation.getChildren().add(nav);
+                if (selected[0] == null) {
+                    selected[0] = nav;
+                    nav.getStyleClass().add("nav-button-selected");
+                    Node view = supplier.get();
+                    view.getStyleClass().add("content-card");
+                    content.getChildren().setAll(view);
+                }
+            });
+        }
+
+        Button logoutBtn = secondaryButton("Log out");
+        logoutBtn.setMaxWidth(Double.MAX_VALUE);
+        logoutBtn.setOnAction(e -> {
+            currentUser = null;
+            currentBuyerProfile = null;
+            currentSupplierProfile = null;
+            primaryStage.setScene(buildLoginScene());
         });
 
-        back.setOnAction(event -> showLoginScreen());
+        sidebar.getChildren().addAll(logo, role, new Separator(), navigation, logoutBtn);
 
-        form.add(title, 0, 0, 2, 1);
-        form.add(subtitle, 0, 1, 2, 1);
-        form.add(fieldLabel("Full name"), 0, 2);
-        form.add(fieldLabel("Email address"), 1, 2);
-        form.add(nameField, 0, 3);
-        form.add(emailField, 1, 3);
-        form.add(fieldLabel("Password"), 0, 4);
-        form.add(fieldLabel("Phone number"), 1, 4);
-        form.add(passwordField, 0, 5);
-        form.add(phoneField, 1, 5);
-        form.add(fieldLabel("Account type"), 0, 6);
-        form.add(fieldLabel("City"), 1, 6);
-        form.add(roleBox, 0, 7);
-        form.add(cityField, 1, 7);
-        form.add(fieldLabel("Address"), 0, 8, 2, 1);
-        form.add(addressArea, 0, 9, 2, 1);
-        form.add(message, 0, 10, 2, 1);
-        form.add(register, 0, 11);
-        form.add(back, 1, 11);
-
-        ColumnConstraints col1 = new ColumnConstraints();
-        col1.setPercentWidth(50);
-        ColumnConstraints col2 = new ColumnConstraints();
-        col2.setPercentWidth(50);
-        form.getColumnConstraints().addAll(col1, col2);
-
-        StackPane center = new StackPane(form);
-        center.setPadding(new Insets(45));
-        root.setCenter(center);
-
-        primaryStage.setScene(new Scene(root));
-    }
-
-    // =========================================================
-    // DASHBOARD SHELL
-    // =========================================================
-
-    private void showDashboard() {
-        dashboardRoot = new BorderPane();
-        dashboardRoot.setStyle("-fx-background-color: " + BACKGROUND + ";");
-
-        sidebar = createSidebar();
-        VBox topBar = createTopBar();
-
-        contentArea = new StackPane();
-        contentArea.setPadding(new Insets(0));
-        contentArea.setStyle("-fx-background-color: " + BACKGROUND + ";");
-
-        dashboardRoot.setLeft(sidebar);
-        dashboardRoot.setTop(topBar);
-        dashboardRoot.setCenter(contentArea);
-
-        showHomePage();
-
-        Scene scene = new Scene(dashboardRoot);
-        primaryStage.setScene(scene);
-        primaryStage.setMaximized(true);
-    }
-
-    private VBox createSidebar() {
-        VBox side = new VBox(8);
-        side.setPrefWidth(245);
-        side.setPadding(new Insets(24, 18, 20, 18));
-        side.setStyle(
-                "-fx-background-color: white;" +
-                        "-fx-border-color: transparent " + BORDER + " transparent transparent;"
-        );
-
-        Label logo = new Label("🌿 FarmersIn");
-        logo.setFont(Font.font("Arial", FontWeight.BOLD, 26));
-        logo.setTextFill(Color.web(PRIMARY_DARK));
-        logo.setPadding(new Insets(0, 8, 24, 8));
-
-        side.getChildren().add(logo);
-
-        addMenuButton(side, "⌂", "Home", this::showHomePage);
-        addMenuButton(side, "▣", "Products", this::showProductsPage);
-        addMenuButton(side, "▦", "Categories", this::showCategoriesPage);
-
-        if (!"BUYER".equals(currentRole)) {
-            addMenuButton(side, "♙", "Suppliers", this::showSuppliersPage);
-        }
-
-        addMenuButton(side, "▤", "Orders", this::showOrdersPage);
-        addMenuButton(side, "☆", "Reviews", this::showReviewsPage);
-        addMenuButton(side, "!", "Complaints", this::showComplaintsPage);
-
-        if ("ADMIN".equals(currentRole)) {
-            addMenuButton(side, "↶", "Refunds", this::showRefundsPage);
-            addMenuButton(side, "▥", "Reports", this::showReportsPage);
-            addMenuButton(side, "♙", "Users", this::showUsersPage);
-            addMenuButton(side, "✓", "Buyer Requests", this::showBuyerRequestsPage);
-            addMenuButton(side, "▧", "Admin Logs", this::showAdminLogsPage);
-        }
-
-        if ("SUPPLIER".equals(currentRole)) {
-            addMenuButton(side, "+", "Add Product", this::showAddProductPage);
-            addMenuButton(side, "▤", "Deliveries", this::showDeliveriesPage);
-        }
-
-        if ("BUYER".equals(currentRole)) {
-            addMenuButton(side, "🛒", "My Cart", this::showCartPage);
-            addMenuButton(side, "✉", "Messages", this::showMessagesPage);
-        }
-
+        HBox header = new HBox(16);
+        header.getStyleClass().add("top-header");
+        header.setPadding(new Insets(18, 26, 18, 26));
+        header.setAlignment(Pos.CENTER_LEFT);
+        Label greeting = new Label("Hello, " + currentUser.getFullName());
+        greeting.getStyleClass().add("header-title");
         Region spacer = new Region();
-        VBox.setVgrow(spacer, Priority.ALWAYS);
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Label account = new Label(currentUser.getRole().toUpperCase());
+        account.getStyleClass().add("account-pill");
+        header.getChildren().addAll(greeting, spacer, account);
 
-        VBox promo = new VBox(10);
-        promo.setPadding(new Insets(16));
-        promo.setStyle(
-                "-fx-background-color: " + PRIMARY_LIGHT + ";" +
-                        "-fx-background-radius: 14;" +
-                        "-fx-border-color: #CFE8D7;" +
-                        "-fx-border-radius: 14;"
-        );
+        BorderPane main = new BorderPane();
+        main.setTop(header);
+        main.setCenter(content);
+        shell.setLeft(sidebar);
+        shell.setCenter(main);
 
-        Label promoTitle = new Label("Grow Your Business");
-        promoTitle.setFont(Font.font("Arial", FontWeight.BOLD, 15));
-        promoTitle.setTextFill(Color.web(PRIMARY_DARK));
+        Scene scene = new Scene(shell, 1400, 860);
+        applyTheme(scene);
+        return scene;
+    }
 
-        Label promoText = new Label(
-                "List products and reach buyers across the country."
-        );
-        promoText.setWrapText(true);
-        promoText.setTextFill(Color.web(MUTED));
-
-        Button promoButton = createPrimaryButton("Get Started");
-        promoButton.setPrefHeight(34);
-
-        if ("SUPPLIER".equals(currentRole)) {
-            promoButton.setOnAction(event -> showAddProductPage());
-        } else {
-            promoButton.setOnAction(event -> showProductsPage());
+    private Map<String, Supplier<Node>> buildViewsForRole(String role) {
+        Map<String, Supplier<Node>> views = new LinkedHashMap<>();
+        switch (role) {
+            case "BUYER" -> {
+                views.put("Browse Products", this::buildBrowseProductsPanel);
+                views.put("My Cart", this::buildCartPanel);
+                views.put("My Orders", this::buildBuyerOrdersPanel);
+                views.put("Addresses", this::buildAddressesPanel);
+                views.put("Messages", this::buildMessagesPanel);
+                views.put("Notifications", this::buildNotificationsPanel);
+                views.put("Complaints", () -> buildComplaintsPanel(true));
+            }
+            case "SUPPLIER" -> {
+                views.put("My Profile", this::buildSupplierProfilePanel);
+                views.put("My Listings", this::buildSupplierListingsPanel);
+                views.put("Incoming Orders", this::buildSupplierOrdersPanel);
+                views.put("Deliveries", this::buildDeliveriesPanel);
+                views.put("Reviews", this::buildSupplierReviewsPanel);
+                views.put("Messages", this::buildMessagesPanel);
+            }
+            case "ADMIN" -> {
+                views.put("Supplier Approvals", this::buildVerifySuppliersPanel);
+                views.put("Buyer Approvals", this::buildVerifyBuyersPanel);
+                views.put("Categories", this::buildCategoriesPanel);
+                views.put("Complaints", () -> buildComplaintsPanel(false));
+                views.put("Refunds", this::buildRefundsPanel);
+                views.put("Market Prices", this::buildMarketPricesPanel);
+                views.put("Admin Logs", this::buildAdminLogsPanel);
+            }
         }
-
-        promo.getChildren().addAll(promoTitle, promoText, promoButton);
-
-        Button logout = createMenuButton("⏻", "Logout");
-        logout.setOnAction(event -> showLoginScreen());
-
-        side.getChildren().addAll(spacer, promo, createSpacer(4), logout);
-        return side;
+        return views;
     }
 
-    private void addMenuButton(VBox side, String icon, String text, Runnable action) {
-        Button button = createMenuButton(icon, text);
-        button.setOnAction(event -> action.run());
-        side.getChildren().add(button);
-    }
+    // =========================================================================
+    //  BUYER: BROWSE PRODUCTS
+    // =========================================================================
 
-    private Button createMenuButton(String icon, String text) {
-        Button button = new Button(icon + "   " + text);
-        button.setAlignment(Pos.CENTER_LEFT);
-        button.setPrefWidth(Double.MAX_VALUE);
-        button.setPrefHeight(43);
-        button.setCursor(Cursor.HAND);
-        button.setFont(Font.font("Arial", 14));
-        button.setStyle(
-                "-fx-background-color: transparent;" +
-                        "-fx-text-fill: " + TEXT + ";" +
-                        "-fx-background-radius: 10;" +
-                        "-fx-padding: 0 14;"
-        );
+    private BorderPane buildBrowseProductsPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Product ID", "Name", "Category ID", "Default Unit", "Description");
 
-        button.setOnMouseEntered(event -> button.setStyle(
-                "-fx-background-color: " + PRIMARY_LIGHT + ";" +
-                        "-fx-text-fill: " + PRIMARY_DARK + ";" +
-                        "-fx-background-radius: 10;" +
-                        "-fx-padding: 0 14;"
-        ));
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                for (Product p : productService.getAllActiveProducts()) {
+                    rows.add(new Row(p.getProductId(), p.getProductName(), p.getCategoryId(),
+                            p.getDefaultUnit(), p.getDescription()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
 
-        button.setOnMouseExited(event -> button.setStyle(
-                "-fx-background-color: transparent;" +
-                        "-fx-text-fill: " + TEXT + ";" +
-                        "-fx-background-radius: 10;" +
-                        "-fx-padding: 0 14;"
-        ));
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
 
-        return button;
-    }
+        Button viewListingsBtn = new Button("View Supplier Listings for Selected Product");
+        viewListingsBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) { info("Select a product first."); return; }
+            showSupplierListingsDialog((int) row.get(0));
+        });
 
-    private VBox createTopBar() {
-        HBox row = new HBox(16);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(15, 25, 15, 25));
-        row.setStyle(
-                "-fx-background-color: white;" +
-                        "-fx-border-color: transparent transparent " + BORDER + " transparent;"
-        );
+        HBox top = new HBox(8, refreshBtn, viewListingsBtn);
+        top.setPadding(new Insets(6));
 
-        Button menuButton = createIconButton("☰");
-
-        TextField search = new TextField();
-        search.setPromptText("Search products, suppliers, categories...");
-        search.setPrefHeight(42);
-        search.setMaxWidth(620);
-        search.setStyle(
-                "-fx-background-color: #F8FAF9;" +
-                        "-fx-background-radius: 20;" +
-                        "-fx-border-color: " + BORDER + ";" +
-                        "-fx-border-radius: 20;" +
-                        "-fx-padding: 0 18;" +
-                        "-fx-font-size: 14px;"
-        );
-        HBox.setHgrow(search, Priority.ALWAYS);
-
-        Button notification = createIconButton("🔔");
-        Button message = createIconButton("✉");
-
-        VBox userInfo = new VBox(2);
-        Label userName = new Label(
-                "ADMIN".equals(currentRole) ? "Admin User"
-                        : "BUYER".equals(currentRole) ? "Buyer Account"
-                          : "Supplier Account"
-        );
-        userName.setFont(Font.font("Arial", FontWeight.BOLD, 14));
-
-        Label roleLabel = new Label(capitalize(currentRole));
-        roleLabel.setTextFill(Color.web(MUTED));
-        roleLabel.setFont(Font.font("Arial", 12));
-        userInfo.getChildren().addAll(userName, roleLabel);
-
-        Label avatar = new Label("👤");
-        avatar.setAlignment(Pos.CENTER);
-        avatar.setPrefSize(42, 42);
-        avatar.setStyle(
-                "-fx-background-color: " + PRIMARY_LIGHT + ";" +
-                        "-fx-background-radius: 21;" +
-                        "-fx-font-size: 19px;"
-        );
-
-        row.getChildren().addAll(
-                menuButton,
-                search,
-                notification,
-                message,
-                avatar,
-                userInfo
-        );
-
-        pageTitle = new Label("Dashboard");
-        pageTitle.setFont(Font.font("Arial", FontWeight.BOLD, 20));
-        pageTitle.setTextFill(Color.web(TEXT));
-
-        HBox titleRow = new HBox(pageTitle);
-        titleRow.setPadding(new Insets(14, 28, 12, 28));
-        titleRow.setStyle("-fx-background-color: " + BACKGROUND + ";");
-
-        VBox wrapper = new VBox(row, titleRow);
-        return wrapper;
-    }
-
-    // =========================================================
-    // HOME PAGE
-    // =========================================================
-
-    private void showHomePage() {
-        setPageTitle("Dashboard");
-
-        VBox content = new VBox(22);
-        content.setPadding(new Insets(5, 28, 28, 28));
-
-        HBox topSection = new HBox(20);
-        topSection.getChildren().addAll(createHeroBanner(), createOverviewPanel());
-        HBox.setHgrow(topSection.getChildren().get(0), Priority.ALWAYS);
-
-        VBox categoriesSection = createCategoriesSection();
-        VBox productsSection = createProductSection();
-
-        content.getChildren().addAll(topSection, categoriesSection, productsSection);
-
-        ScrollPane scroll = createScrollPane(content);
-        setContent(scroll);
-    }
-
-    private Pane createHeroBanner() {
-        VBox hero = new VBox(18);
-        hero.setPadding(new Insets(38));
-        hero.setPrefHeight(360);
-        hero.setMinWidth(600);
-        hero.setStyle(
-                "-fx-background-color: linear-gradient(to right, " +
-                        PRIMARY_DARK + ", " + PRIMARY + ");" +
-                        "-fx-background-radius: 18;"
-        );
-
-        Label title = new Label("Fresh From Farms\nto Your Business");
-        title.setTextFill(Color.WHITE);
-        title.setFont(Font.font("Arial", FontWeight.BOLD, 38));
-
-        Label description = new Label(
-                "Your trusted marketplace for high-quality\n" +
-                        "agricultural products from verified suppliers."
-        );
-        description.setTextFill(Color.web("#E3F4E8"));
-        description.setFont(Font.font("Arial", 17));
-
-        Button explore = new Button("Explore Products  →");
-        explore.setCursor(Cursor.HAND);
-        explore.setPrefHeight(48);
-        explore.setStyle(
-                "-fx-background-color: #48A83E;" +
-                        "-fx-text-fill: white;" +
-                        "-fx-font-size: 15px;" +
-                        "-fx-font-weight: bold;" +
-                        "-fx-background-radius: 10;" +
-                        "-fx-padding: 0 22;"
-        );
-        explore.setOnAction(event -> showProductsPage());
-
-        Region spacer = new Region();
-        VBox.setVgrow(spacer, Priority.ALWAYS);
-
-        HBox qualities = new HBox(30);
-        qualities.getChildren().addAll(
-                createHeroQuality("✓", "Quality\nGuaranteed"),
-                createHeroQuality("★", "Verified\nSuppliers"),
-                createHeroQuality("▣", "Secure\nTransactions")
-        );
-
-        hero.getChildren().addAll(title, description, explore, spacer, qualities);
-        HBox.setHgrow(hero, Priority.ALWAYS);
-        return hero;
-    }
-
-    private VBox createHeroQuality(String icon, String text) {
-        Label iconLabel = new Label(icon);
-        iconLabel.setTextFill(Color.web("#79D45B"));
-        iconLabel.setFont(Font.font("Arial", FontWeight.BOLD, 24));
-
-        Label textLabel = new Label(text);
-        textLabel.setTextFill(Color.WHITE);
-        textLabel.setFont(Font.font("Arial", 13));
-
-        VBox box = new VBox(5, iconLabel, textLabel);
-        return box;
-    }
-
-    private VBox createOverviewPanel() {
-        VBox panel = new VBox(12);
-        panel.setPadding(new Insets(22));
-        panel.setPrefWidth(340);
-        panel.setStyle(cardStyle(16));
-        panel.setEffect(createShadow());
-
-        Label heading = new Label("Overview");
-        heading.setFont(Font.font("Arial", FontWeight.BOLD, 19));
-
-        panel.getChildren().addAll(
-                heading,
-                createSeparator(),
-                createOverviewRow("🛍", "Total Products", "1,245", "+12.5%", PRIMARY),
-                createSeparator(),
-                createOverviewRow("♙", "Total Suppliers", "0", "0%", INFO),
-                createSeparator(),
-                createOverviewRow("🛒", "Total Orders", "0", "0%", WARNING),
-                createSeparator(),
-                createOverviewRow("☆", "Average Rating", "0.0", "0", "#7C3AED")
-        );
-
+        panel.setTop(top);
+        panel.setCenter(table);
         return panel;
     }
 
-    private HBox createOverviewRow(String icon, String label, String value, String change, String color) {
-        Label iconLabel = new Label(icon);
-        iconLabel.setAlignment(Pos.CENTER);
-        iconLabel.setPrefSize(54, 54);
-        iconLabel.setFont(Font.font("Arial", 22));
-        iconLabel.setStyle(
-                "-fx-background-color: derive(" + color + ", 85%);" +
-                        "-fx-background-radius: 12;"
-        );
-
-        VBox values = new VBox(4);
-        Label labelText = new Label(label);
-        labelText.setTextFill(Color.web(MUTED));
-        labelText.setFont(Font.font("Arial", 12));
-
-        Label valueText = new Label(value);
-        valueText.setFont(Font.font("Arial", FontWeight.BOLD, 21));
-        values.getChildren().addAll(labelText, valueText);
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-
-        Label changeLabel = new Label(change);
-        changeLabel.setTextFill(Color.web(PRIMARY));
-        changeLabel.setFont(Font.font("Arial", FontWeight.BOLD, 12));
-
-        HBox row = new HBox(14, iconLabel, values, spacer, changeLabel);
-        row.setAlignment(Pos.CENTER_LEFT);
-        return row;
-    }
-
-    private VBox createCategoriesSection() {
-        VBox section = new VBox(12);
-        section.getChildren().add(createSectionHeader("Categories", this::showCategoriesPage));
-
-        TilePane tiles = new TilePane();
-        tiles.setHgap(12);
-        tiles.setVgap(12);
-        tiles.setPrefColumns(8);
-
-        tiles.getChildren().addAll(
-                createCategoryCard("🥬", "Fresh Vegetables"),
-                createCategoryCard("🍎", "Fruits"),
-                createCategoryCard("🌾", "Grains & Cereals"),
-                createCategoryCard("🫘", "Pulses & Beans"),
-                createCategoryCard("🥛", "Dairy Products"),
-                createCategoryCard("🌶", "Spices"),
-                createCategoryCard("🌰", "Nuts & Seeds"),
-                createCategoryCard("▦", "Others")
-        );
-
-        section.getChildren().add(tiles);
-        return section;
-    }
-
-    private VBox createProductSection() {
-        VBox section = new VBox(12);
-        section.getChildren().add(createSectionHeader("Recent Products", this::showProductsPage));
-
-        HBox products = new HBox(14);
-        products.getChildren().addAll(
-                createProductCard("🍅", "Fresh Tomatoes", "Green Valley Farms", "Rs. 120 /kg", "4.7"),
-                createProductCard("🥔", "Premium Potatoes", "Farm Fresh Co.", "Rs. 80 /kg", "4.6"),
-                createProductCard("🥒", "Cucumbers", "Organic Fields", "Rs. 90 /kg", "4.5"),
-                createProductCard("🧅", "Red Onions", "Punjab Agro", "Rs. 70 /kg", "4.8"),
-                createProductCard("🍚", "Basmati Rice", "Golden Harvest", "Rs. 180 /kg", "4.9")
-        );
-
-        section.getChildren().add(products);
-        return section;
-    }
-
-    private HBox createSectionHeader(String title, Runnable action) {
-        Label label = new Label(title);
-        label.setFont(Font.font("Arial", FontWeight.BOLD, 19));
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-
-        Button viewAll = new Button("View All");
-        viewAll.setCursor(Cursor.HAND);
-        viewAll.setStyle(
-                "-fx-background-color: transparent;" +
-                        "-fx-text-fill: " + PRIMARY + ";" +
-                        "-fx-font-weight: bold;"
-        );
-        viewAll.setOnAction(event -> action.run());
-
-        HBox row = new HBox(label, spacer, viewAll);
-        row.setAlignment(Pos.CENTER_LEFT);
-        return row;
-    }
-
-    private VBox createCategoryCard(String icon, String title) {
-        VBox card = new VBox(8);
-        card.setAlignment(Pos.CENTER);
-        card.setPadding(new Insets(15));
-        card.setPrefWidth(135);
-        card.setPrefHeight(105);
-        card.setCursor(Cursor.HAND);
-        card.setStyle(cardStyle(12));
-        card.setEffect(createSmallShadow());
-
-        Label iconLabel = new Label(icon);
-        iconLabel.setFont(Font.font("Arial", 27));
-
-        Label titleLabel = new Label(title);
-        titleLabel.setFont(Font.font("Arial", 12));
-        titleLabel.setWrapText(true);
-        titleLabel.setAlignment(Pos.CENTER);
-
-        card.getChildren().addAll(iconLabel, titleLabel);
-
-        card.setOnMouseClicked(event -> showCategoryProductsPage(title));
-
-        card.setOnMouseEntered(event -> card.setStyle(
-                "-fx-background-color: " + PRIMARY_LIGHT + ";" +
-                        "-fx-background-radius: 12;" +
-                        "-fx-border-color: #BFD9C8;" +
-                        "-fx-border-radius: 12;"
-        ));
-
-        card.setOnMouseExited(event -> card.setStyle(cardStyle(12)));
-
-        return card;
-    }
-
-    private VBox createProductCard(String icon, String name, String supplier, String price, String rating) {
-        VBox card = new VBox(8);
-        card.setPadding(new Insets(13));
-        card.setPrefWidth(210);
-        card.setStyle(cardStyle(14));
-        card.setEffect(createSmallShadow());
-
-        StackPane imageArea = new StackPane();
-        imageArea.setPrefHeight(105);
-        imageArea.setStyle(
-                "-fx-background-color: " + PRIMARY_LIGHT + ";" +
-                        "-fx-background-radius: 10;"
-        );
-
-        Label productIcon = new Label(icon);
-        productIcon.setFont(Font.font("Arial", 54));
-        imageArea.getChildren().add(productIcon);
-
-        Label nameLabel = new Label(name);
-        nameLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
-
-        Label supplierLabel = new Label(supplier);
-        supplierLabel.setTextFill(Color.web(MUTED));
-        supplierLabel.setFont(Font.font("Arial", 12));
-
-        Label priceLabel = new Label(price);
-        priceLabel.setFont(Font.font("Arial", FontWeight.BOLD, 16));
-
-        Label stockLabel = new Label("In Stock");
-        stockLabel.setTextFill(Color.web(PRIMARY));
-        stockLabel.setFont(Font.font("Arial", 12));
-
-        HBox footer = new HBox();
-        footer.setAlignment(Pos.CENTER_LEFT);
-
-        Label ratingLabel = new Label("★ " + rating);
-        ratingLabel.setTextFill(Color.web(WARNING));
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-
-        Button cartButton = createIconButton("🛒");
-        cartButton.setOnAction(event -> showInfo("Product added to cart."));
-
-        footer.getChildren().addAll(ratingLabel, spacer, cartButton);
-
-        card.getChildren().addAll(
-                imageArea, nameLabel, supplierLabel, priceLabel, stockLabel, footer
-        );
-
-        return card;
-    }
-
-    // =========================================================
-    // PRODUCTS PAGE
-    // =========================================================
-
-    private void showProductsPage() {
-        setPageTitle("Products");
-
-        VBox content = createPageContainer();
-
-        HBox header = new HBox(12);
-        header.setAlignment(Pos.CENTER_LEFT);
-
-        TextField search = createTextField("Search products...");
-        search.setPrefWidth(350);
-
-        ComboBox<String> categoryFilter = new ComboBox<>();
-        categoryFilter.getItems().addAll(
-                "All Categories", "Vegetables", "Fruits", "Dairy", "Grains", "Spices"
-        );
-        categoryFilter.setValue("All Categories");
-        categoryFilter.setPrefHeight(44);
-        categoryFilter.setStyle(inputStyle());
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-
-        Button add = createPrimaryButton("+ Add Product");
-        add.setVisible(!"BUYER".equals(currentRole));
-        add.setManaged(!"BUYER".equals(currentRole));
-        add.setOnAction(event -> showAddProductPage());
-
-        header.getChildren().addAll(search, categoryFilter, spacer, add);
-
-        TilePane products = new TilePane();
-        products.setHgap(16);
-        products.setVgap(16);
-        products.setPrefColumns(4);
-
-        products.getChildren().addAll(
-                createLargeProductCard("🍅", "Fresh Tomatoes", "Vegetables", "Green Valley Farms", "Rs. 120 /kg"),
-                createLargeProductCard("🥔", "Premium Potatoes", "Vegetables", "Farm Fresh Co.", "Rs. 80 /kg"),
-                createLargeProductCard("🥒", "Cucumbers", "Vegetables", "Organic Fields", "Rs. 90 /kg"),
-                createLargeProductCard("🧅", "Red Onions", "Vegetables", "Punjab Agro", "Rs. 70 /kg"),
-                createLargeProductCard("🍚", "Basmati Rice", "Grains", "Golden Harvest", "Rs. 180 /kg"),
-                createLargeProductCard("🥛", "Fresh Milk", "Dairy", "Pure Dairy Farm", "Rs. 220 /litre"),
-                createLargeProductCard("🍎", "Red Apples", "Fruits", "Northern Orchards", "Rs. 260 /kg"),
-                createLargeProductCard("🌶", "Red Chilies", "Spices", "Sindh Spices", "Rs. 340 /kg")
-        );
-
-        content.getChildren().addAll(header, products);
-        setContent(createScrollPane(content));
-    }
-
-    private VBox createLargeProductCard(String icon, String name, String category,
-                                        String supplier, String price) {
-        VBox card = new VBox(10);
-        card.setPadding(new Insets(15));
-        card.setPrefWidth(260);
-        card.setStyle(cardStyle(14));
-        card.setEffect(createSmallShadow());
-
-        StackPane image = new StackPane();
-        image.setPrefHeight(145);
-        image.setStyle(
-                "-fx-background-color: " + PRIMARY_LIGHT + ";" +
-                        "-fx-background-radius: 12;"
-        );
-
-        Label iconLabel = new Label(icon);
-        iconLabel.setFont(Font.font("Arial", 68));
-        image.getChildren().add(iconLabel);
-
-        Label nameLabel = new Label(name);
-        nameLabel.setFont(Font.font("Arial", FontWeight.BOLD, 16));
-
-        Label categoryLabel = new Label(category);
-        categoryLabel.setStyle(
-                "-fx-background-color: " + PRIMARY_LIGHT + ";" +
-                        "-fx-text-fill: " + PRIMARY_DARK + ";" +
-                        "-fx-background-radius: 10;" +
-                        "-fx-padding: 4 9;"
-        );
-
-        Label supplierLabel = new Label(supplier);
-        supplierLabel.setTextFill(Color.web(MUTED));
-
-        Label priceLabel = new Label(price);
-        priceLabel.setFont(Font.font("Arial", FontWeight.BOLD, 17));
-
-        Button action = createPrimaryButton(
-                "BUYER".equals(currentRole) ? "Add to Cart" : "View Details"
-        );
-        action.setMaxWidth(Double.MAX_VALUE);
-        action.setOnAction(event -> showInfo(
-                "BUYER".equals(currentRole)
-                        ? name + " added to cart."
-                        : "Opening details for " + name + "."
-        ));
-
-        card.getChildren().addAll(
-                image, nameLabel, categoryLabel, supplierLabel, priceLabel, action
-        );
-
-        return card;
-    }
-
-    private void showCategoryProductsPage(String categoryName) {
-        setPageTitle(categoryName);
-
-        VBox content = createPageContainer();
-
-        HBox header = new HBox(12);
-        header.setAlignment(Pos.CENTER_LEFT);
-
-        Button backButton = createSecondaryButton("← Back to Categories");
-        backButton.setOnAction(event -> showCategoriesPage());
-
-        Label title = new Label(categoryName);
-        title.setFont(Font.font("Arial", FontWeight.BOLD, 22));
-
-        header.getChildren().addAll(backButton, title);
-
-        VBox emptyState = createEmptyState(
-                "No products available",
-                "Products for " + categoryName + " will appear here after they are added."
-        );
-
-        content.getChildren().addAll(header, emptyState);
-        setContent(createScrollPane(content));
-    }
-
-    // =========================================================
-    // GENERIC DATA PAGES
-    // =========================================================
-
-    private void showCategoriesPage() {
-        setPageTitle("Categories");
-
-        VBox content = createPageContainer();
-
-        HBox header = createTitleActionRow(
-                "Manage Product Categories",
-                "ADMIN".equals(currentRole) ? "+ Add Category" : null,
-                () -> showInfo("Add category form will open here.")
-        );
-
-        TilePane categories = new TilePane();
-        categories.setHgap(18);
-        categories.setVgap(18);
-        categories.setPrefColumns(4);
-
-        categories.getChildren().addAll(
-                createCategoryManagementCard("🥬", "Fresh Vegetables", "0 products"),
-                createCategoryManagementCard("🍎", "Fruits", "0 products"),
-                createCategoryManagementCard("🌾", "Grains & Cereals", "0 products"),
-                createCategoryManagementCard("🫘", "Pulses & Beans", "0 products"),
-                createCategoryManagementCard("🥛", "Dairy Products", "0 products"),
-                createCategoryManagementCard("🌶", "Spices", "0 products"),
-                createCategoryManagementCard("🌰", "Nuts & Seeds", "0 products"),
-                createCategoryManagementCard("▦", "Others", "0 products")
-        );
-
-        content.getChildren().addAll(header, categories);
-        setContent(createScrollPane(content));
-    }
-
-    private VBox createCategoryManagementCard(String icon, String name, String count) {
-        VBox card = new VBox(10);
-        card.setAlignment(Pos.CENTER);
-        card.setPadding(new Insets(22));
-        card.setPrefWidth(230);
-        card.setPrefHeight(170);
-        card.setCursor(Cursor.HAND);
-        card.setStyle(cardStyle(14));
-        card.setEffect(createSmallShadow());
-
-        Label iconLabel = new Label(icon);
-        iconLabel.setFont(Font.font("Arial", 42));
-
-        Label nameLabel = new Label(name);
-        nameLabel.setFont(Font.font("Arial", FontWeight.BOLD, 16));
-
-        Label countLabel = new Label(count);
-        countLabel.setTextFill(Color.web(MUTED));
-
-        card.getChildren().addAll(iconLabel, nameLabel, countLabel);
-
-        card.setOnMouseClicked(event -> showCategoryProductsPage(name));
-
-        card.setOnMouseEntered(event -> card.setStyle(
-                "-fx-background-color: " + PRIMARY_LIGHT + ";" +
-                        "-fx-background-radius: 14;" +
-                        "-fx-border-color: #BFD9C8;" +
-                        "-fx-border-radius: 14;"
-        ));
-
-        card.setOnMouseExited(event -> card.setStyle(cardStyle(14)));
-
-        return card;
-    }
-
-    private void showSuppliersPage() {
-        showServiceTablePage("Suppliers", "services.SupplierProfileService",
-                "getPendingVerifications", "getPendingVerifications",
-                new String[]{"Approve", "Reject"},
-                new String[]{"VERIFIED", "REJECTED"},
-                "updateVerificationStatus", "getSupplierId");
-    }
-
-
-    private void showBuyerRequestsPage() {
-        showServiceTablePage("Buyer Verification Requests", "services.buyerprofile",
-                "getPendingVerifications", "getPendingVerifications",
-                new String[]{"Approve", "Reject"}, new String[]{"VERIFIED", "REJECTED"},
-                "updateVerificationStatus", "getBuyerId");
-    }
-
-    private void showOrdersPage() {
-        String method = "BUYER".equals(currentRole) ? "getOrdersByBuyerId" :
-                "SUPPLIER".equals(currentRole) ? "getOrdersBySupplierId" : null;
-        if (method == null) {
-            showIdLookupPage("Orders", "services.OrderService", "getOrderById", "Order ID");
-        } else {
-            showIdListPage("Orders", "services.OrderService", method,
-                    "Enter your " + currentRole.toLowerCase() + " ID");
-        }
-    }
-
-    private void showUsersPage() {
-        setPageTitle("Users");
-        VBox box = createPageContainer();
-        ComboBox<String> role = new ComboBox<>();
-        role.getItems().addAll("BUYER", "SUPPLIER", "ADMIN");
-        role.setValue("BUYER"); role.setPrefHeight(42); role.setStyle(inputStyle());
-        Button load = createPrimaryButton("Load Users");
-        HBox controls = new HBox(12, role, load); controls.setAlignment(Pos.CENTER_LEFT);
-        box.getChildren().add(controls);
-        load.setOnAction(e -> loadServiceListInto(box, "services.UserService", "getUsersByRole", role.getValue()));
-        setContent(createScrollPane(box));
-        load.fire();
-    }
-
-    private void showReviewsPage() {
-        showIdListPage("Reviews", "services.ReviewService", "getReviewsBySupplierId", "Supplier ID");
-    }
-
-    private void showComplaintsPage() {
-        setPageTitle("Complaints");
-        VBox box = createPageContainer();
-        ComboBox<String> status = new ComboBox<>();
-        status.getItems().addAll("OPEN", "UNDER_REVIEW", "RESOLVED", "REJECTED");
-        status.setValue("OPEN"); status.setPrefHeight(42); status.setStyle(inputStyle());
-        Button load = createPrimaryButton("Load Complaints");
-        HBox controls = new HBox(12, status, load); controls.setAlignment(Pos.CENTER_LEFT);
-        box.getChildren().add(controls);
-        load.setOnAction(e -> loadServiceListWithActions(box, "services.ComplaintService",
-                "getComplaintsByStatus", status.getValue(),
-                new String[]{"Under Review", "Resolve", "Reject"},
-                new String[]{"UNDER_REVIEW", "RESOLVED", "REJECTED"},
-                "updateStatus", "getComplaintId"));
-        setContent(createScrollPane(box)); load.fire();
-    }
-
-    private void showRefundsPage() {
-        showServiceTablePage("Refunds", "services.RefundService", "getPendingRefunds", "getPendingRefunds",
-                new String[]{"Approve", "Reject"}, new String[]{"APPROVED", "REJECTED"},
-                "updateRefundStatus", "getRefundId");
-    }
-
-    private void showReportsPage() {
-        setPageTitle("Reports");
-
-        VBox content = createPageContainer();
-        HBox metrics = new HBox(16,
-                createMetricCard("Monthly Revenue", "Rs. 2.8M", "↗", PRIMARY),
-                createMetricCard("Orders This Month", "842", "▤", INFO),
-                createMetricCard("New Suppliers", "47", "♙", WARNING),
-                createMetricCard("Refund Rate", "1.8%", "↶", DANGER)
-        );
-
-        VBox chart = new VBox(18);
-        chart.setPadding(new Insets(25));
-        chart.setPrefHeight(420);
-        chart.setStyle(cardStyle(16));
-
-        Label chartTitle = new Label("Sales Overview");
-        chartTitle.setFont(Font.font("Arial", FontWeight.BOLD, 20));
-
-        HBox bars = new HBox(25);
-        bars.setAlignment(Pos.BOTTOM_CENTER);
-        bars.setPadding(new Insets(35));
-
-        String[] months = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"};
-        int[] heights = {120, 180, 155, 220, 260, 310};
-
-        for (int i = 0; i < months.length; i++) {
-            VBox barBox = new VBox(8);
-            barBox.setAlignment(Pos.BOTTOM_CENTER);
-
-            Region bar = new Region();
-            bar.setPrefSize(45, heights[i]);
-            bar.setStyle(
-                    "-fx-background-color: " + PRIMARY + ";" +
-                            "-fx-background-radius: 8 8 0 0;"
-            );
-
-            Label month = new Label(months[i]);
-            month.setTextFill(Color.web(MUTED));
-
-            barBox.getChildren().addAll(bar, month);
-            bars.getChildren().add(barBox);
-        }
-
-        chart.getChildren().addAll(chartTitle, bars);
-        content.getChildren().addAll(metrics, chart);
-        setContent(createScrollPane(content));
-    }
-
-    private void showAdminLogsPage() {
-        showServiceTablePage("Admin Logs", "services.admin_logs", "getAllLogs", "getAllLogs",
-                new String[0], new String[0], null, "getLogId");
-    }
-
-    private void showAddProductPage() {
-        setPageTitle("Add Product");
-
-        VBox content = createPageContainer();
-
-        GridPane form = new GridPane();
-        form.setHgap(18);
-        form.setVgap(14);
-        form.setPadding(new Insets(28));
-        form.setStyle(cardStyle(16));
-
-        TextField name = createTextField("Product name");
-        ComboBox<String> category = new ComboBox<>();
-        category.getItems().addAll("Vegetables", "Fruits", "Dairy", "Grains", "Spices");
-        category.setPromptText("Select category");
-        category.setPrefHeight(44);
-        category.setMaxWidth(Double.MAX_VALUE);
-        category.setStyle(inputStyle());
-
-        TextField price = createTextField("Price");
-        TextField quantity = createTextField("Available quantity");
-        TextField unit = createTextField("Unit, e.g. kg or litre");
-        TextField minOrder = createTextField("Minimum order quantity");
-
-        TextArea description = new TextArea();
-        description.setPromptText("Product description");
-        description.setPrefRowCount(4);
-        description.setStyle(inputStyle());
-
-        Label message = new Label();
-
-        Button save = createPrimaryButton("Save Product");
-        Button clear = createSecondaryButton("Clear Form");
-
-        save.setOnAction(event -> {
-            if (name.getText().trim().isEmpty()
-                    || category.getValue() == null
-                    || price.getText().trim().isEmpty()
-                    || quantity.getText().trim().isEmpty()) {
-                message.setTextFill(Color.web(DANGER));
-                message.setText("Please complete all required fields.");
-            } else {
-                message.setTextFill(Color.web(PRIMARY));
-                message.setText("Product saved successfully.");
+    private void showSupplierListingsDialog(int productId) {
+        Stage dialog = new Stage();
+        dialog.setTitle("Supplier Listings");
+        BorderPane root = new BorderPane();
+
+        TableView<Row> table = buildTable("Listing ID", "Supplier ID", "Price/Unit", "Available Qty", "Min Order Qty", "Unit", "Grade");
+        ObservableList<Row> rows = FXCollections.observableArrayList();
+        try {
+            for (SupplierProduct sp : supplierProductService.getApprovedByProductId(productId)) {
+                rows.add(new Row(sp.getSupplierProductId(), sp.getSupplierId(), sp.getPricePerUnit(),
+                        sp.getAvailableQuantity(), sp.getMinimumOrderQuantity(), sp.getUnitType(), sp.getQualityGrade()));
             }
+        } catch (Exception ex) { showError(ex); }
+        table.setItems(rows);
+
+        Button addToCartBtn = new Button("Add Selected to Cart");
+        addToCartBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) { info("Select a listing first."); return; }
+            Optional<String> qtyOpt = textPrompt("Quantity", "Quantity to add:");
+            if (qtyOpt.isEmpty() || qtyOpt.get().isBlank()) return;
+            try {
+                requireBuyer();
+                CartItem item = new CartItem();
+                item.setCartId(getOrCreateCartId(currentUser.getUserId()));
+                item.setSupplierProductId((int) row.get(0));
+                item.setQuantity(new BigDecimal(qtyOpt.get().trim()));
+                cartItemService.addCartItem(item);
+                info("Added to cart.");
+            } catch (Exception ex) { showError(ex); }
         });
 
-        clear.setOnAction(event -> {
-            name.clear();
-            category.setValue(null);
-            price.clear();
-            quantity.clear();
-            unit.clear();
-            minOrder.clear();
-            description.clear();
-            message.setText("");
+        root.setCenter(table);
+        root.setBottom(addToCartBtn);
+        dialog.setScene(new Scene(root, 700, 400));
+        dialog.show();
+    }
+
+    /**
+     * Stand-in for a real Cart/CartService. Since no cart table/service was provided,
+     * this uses the buyer's own userId as their cartId, so each buyer has exactly one
+     * running cart. Swap this out if you have a real carts table.
+     */
+    private int getOrCreateCartId(int buyerUserId) {
+        return buyerUserId;
+    }
+
+    // =========================================================================
+    //  BUYER: CART + CHECKOUT
+    // =========================================================================
+
+    private BorderPane buildCartPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Cart Item ID", "Supplier Product ID", "Quantity");
+
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                requireBuyer();
+                for (CartItem c : cartItemService.getItemsByCartId(getOrCreateCartId(currentUser.getUserId()))) {
+                    rows.add(new Row(c.getCartItemId(), c.getSupplierProductId(), c.getQuantity()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        Button updateQtyBtn = new Button("Update Quantity");
+        updateQtyBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            Optional<String> qtyOpt = textPrompt("Update Quantity", "New quantity:");
+            if (qtyOpt.isEmpty() || qtyOpt.get().isBlank()) return;
+            try {
+                cartItemService.updateQuantity((int) row.get(0), new BigDecimal(qtyOpt.get().trim()));
+                refresh.run();
+            } catch (Exception ex) { showError(ex); }
         });
 
-        form.add(fieldLabel("Product name"), 0, 0);
-        form.add(fieldLabel("Category"), 1, 0);
-        form.add(name, 0, 1);
-        form.add(category, 1, 1);
-        form.add(fieldLabel("Price"), 0, 2);
-        form.add(fieldLabel("Available quantity"), 1, 2);
-        form.add(price, 0, 3);
-        form.add(quantity, 1, 3);
-        form.add(fieldLabel("Unit"), 0, 4);
-        form.add(fieldLabel("Minimum order quantity"), 1, 4);
-        form.add(unit, 0, 5);
-        form.add(minOrder, 1, 5);
-        form.add(fieldLabel("Description"), 0, 6, 2, 1);
-        form.add(description, 0, 7, 2, 1);
-        form.add(message, 0, 8, 2, 1);
-        form.add(save, 0, 9);
-        form.add(clear, 1, 9);
+        Button removeBtn = new Button("Remove Item");
+        removeBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            try { cartItemService.deleteCartItem((int) row.get(0)); refresh.run(); }
+            catch (Exception ex) { showError(ex); }
+        });
 
-        ColumnConstraints first = new ColumnConstraints();
-        first.setPercentWidth(50);
-        ColumnConstraints second = new ColumnConstraints();
-        second.setPercentWidth(50);
-        form.getColumnConstraints().addAll(first, second);
+        Button checkoutBtn = new Button("Checkout Cart");
+        checkoutBtn.setOnAction(e -> checkoutFlow(refresh));
 
-        content.getChildren().add(form);
-        setContent(createScrollPane(content));
+        HBox top = new HBox(8, refreshBtn, updateQtyBtn, removeBtn, checkoutBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
     }
 
-    private void showDeliveriesPage() {
-        setPageTitle("Deliveries");
-        VBox box = createPageContainer();
-        ComboBox<String> status = new ComboBox<>();
-        status.getItems().addAll("PENDING", "DISPATCHED", "IN_TRANSIT", "DELIVERED", "CANCELLED");
-        status.setValue("PENDING"); status.setPrefHeight(42); status.setStyle(inputStyle());
-        Button load = createPrimaryButton("Load Deliveries");
-        box.getChildren().add(new HBox(12, status, load));
-        load.setOnAction(e -> loadServiceListWithActions(box, "services.DeliveryService", "getDeliveriesByStatus", status.getValue(),
-                new String[]{"Dispatch", "Deliver"}, new String[]{"DISPATCHED", "DELIVERED"},
-                "updateStatus", "getDeliveryId"));
-        setContent(createScrollPane(box)); load.fire();
+    /**
+     * Simplified checkout: asks for a supplier ID and delivery address ID, then turns every
+     * current cart item into an Order + OrderItems, and clears the cart.
+     * (Orders in this schema belong to a single supplier, so in a full app you'd group cart
+     * items by supplier automatically - here we ask directly to keep the flow short.)
+     */
+    private void checkoutFlow(Runnable refreshCart) {
+        try {
+            requireBuyer();
+            List<CartItem> items = cartItemService.getItemsByCartId(getOrCreateCartId(currentUser.getUserId()));
+            if (items.isEmpty()) { info("Your cart is empty."); return; }
+
+            List<Address> addresses = addressService.getAddressesByUserId(currentUser.getUserId());
+            if (addresses.isEmpty()) { info("Add a delivery address first (My Addresses tab)."); return; }
+
+            Optional<String> supplierIdOpt = textPrompt("Checkout", "Supplier ID for this order:");
+            if (supplierIdOpt.isEmpty() || supplierIdOpt.get().isBlank()) return;
+
+            StringBuilder addrList = new StringBuilder();
+            for (Address a : addresses) addrList.append(a.getAddressId()).append(": ").append(a.getAddressLine()).append("\n");
+            Optional<String> addressIdOpt = textPrompt("Checkout", "Delivery Address ID:\n" + addrList);
+            if (addressIdOpt.isEmpty() || addressIdOpt.get().isBlank()) return;
+
+            BigDecimal productTotal = BigDecimal.ZERO;
+            for (CartItem c : items) {
+                SupplierProduct sp = supplierProductService.getSupplierProductById(c.getSupplierProductId());
+                productTotal = productTotal.add(sp.getPricePerUnit().multiply(c.getQuantity()));
+            }
+
+            Order order = new Order();
+            order.setBuyerId(currentUser.getUserId());
+            order.setSupplierId(Integer.parseInt(supplierIdOpt.get().trim()));
+            order.setDeliveryAddressId(Integer.parseInt(addressIdOpt.get().trim()));
+            order.setProductTotal(productTotal);
+            order.setDeliveryCharge(BigDecimal.ZERO);
+            order.setDiscountAmount(BigDecimal.ZERO);
+            order.setAdvancePercentage(BigDecimal.ZERO);
+            orderService.addOrder(order);
+
+            for (CartItem c : items) {
+                SupplierProduct sp = supplierProductService.getSupplierProductById(c.getSupplierProductId());
+                OrderItem oi = new OrderItem();
+                oi.setOrderId(order.getOrderId());
+                oi.setSupplierProductId(c.getSupplierProductId());
+                oi.setQuantity(c.getQuantity());
+                oi.setUnitPrice(sp.getPricePerUnit());
+                orderItemService.addOrderItem(oi);
+            }
+
+            cartItemService.clearCart(getOrCreateCartId(currentUser.getUserId()));
+            info("Order placed! Order ID: " + order.getOrderId());
+            refreshCart.run();
+        } catch (Exception ex) { showError(ex); }
     }
 
-    private void showCartPage() {
-        showIdListPage("My Cart", "services.CartItemService", "getItemsByCartId", "Cart ID");
+    // =========================================================================
+    //  BUYER: MY ORDERS (+ pay + review + complaint)
+    // =========================================================================
+
+    private BorderPane buildBuyerOrdersPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Order ID", "Supplier ID", "Total", "Order Status", "Payment Status");
+
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                requireBuyer();
+                for (Order o : orderService.getOrdersByBuyerId(currentUser.getUserId())) {
+                    rows.add(new Row(o.getOrderId(), o.getSupplierId(), o.getTotalAmount(),
+                            o.getOrderStatus(), o.getPaymentStatus()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        Button payBtn = new Button("Make Payment");
+        payBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            Optional<String[]> valuesOpt = promptFields("Make Payment",
+                    "Payment type (ADVANCE/REMAINING/REFUND)", "Payment method", "Amount", "Transaction reference (optional)");
+            if (valuesOpt.isEmpty()) return;
+            String[] values = valuesOpt.get();
+            try {
+                Payment payment = new Payment();
+                payment.setOrderId((int) row.get(0));
+                payment.setBuyerId(currentUser.getUserId());
+                payment.setPaymentType(values[0]);
+                payment.setPaymentMethod(values[1]);
+                payment.setAmount(new BigDecimal(values[2].trim()));
+                payment.setTransactionReference(values[3].isBlank() ? null : values[3]);
+                paymentService.addPayment(payment);
+                info("Payment submitted (status PENDING until verified).");
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        Button reviewBtn = new Button("Leave Review");
+        reviewBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            Optional<String[]> valuesOpt = promptFields("Leave Review", "Rating (1-5)", "Comments (optional)");
+            if (valuesOpt.isEmpty()) return;
+            String[] values = valuesOpt.get();
+            try {
+                Review review = new Review();
+                review.setOrderId((int) row.get(0));
+                review.setBuyerId(currentUser.getUserId());
+                review.setSupplierId((int) row.get(1));
+                review.setRating(Integer.parseInt(values[0].trim()));
+                review.setComments(values[1].isBlank() ? null : values[1]);
+                reviewService.addReview(review);
+                info("Review submitted.");
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        Button fileComplaintBtn = new Button("File Complaint about Order");
+        fileComplaintBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            fileComplaintDialog((int) row.get(0), (int) row.get(1));
+        });
+
+        HBox top = new HBox(8, refreshBtn, payBtn, reviewBtn, fileComplaintBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
     }
 
-    private HBox createCartRow(String icon, String name, String quantity, String amount) {
-        Label iconLabel = new Label(icon);
-        iconLabel.setFont(Font.font("Arial", 34));
+    // =========================================================================
+    //  BUYER: ADDRESSES
+    // =========================================================================
 
-        VBox info = new VBox(4);
-        Label nameLabel = new Label(name);
-        nameLabel.setFont(Font.font("Arial", FontWeight.BOLD, 15));
-        Label quantityLabel = new Label(quantity);
-        quantityLabel.setTextFill(Color.web(MUTED));
-        info.getChildren().addAll(nameLabel, quantityLabel);
+    private BorderPane buildAddressesPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Address ID", "Type", "Line", "City", "Area", "Default");
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                requireLoggedIn();
+                for (Address a : addressService.getAddressesByUserId(currentUser.getUserId())) {
+                    rows.add(new Row(a.getAddressId(), a.getAddressType(), a.getAddressLine(),
+                            a.getCity(), a.getArea(), a.isDefault()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
 
-        Label amountLabel = new Label(amount);
-        amountLabel.setFont(Font.font("Arial", FontWeight.BOLD, 16));
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
 
-        Button remove = createSecondaryButton("Remove");
-        remove.setOnAction(event -> showInfo(name + " removed from cart."));
+        Button addBtn = new Button("Add Address");
+        addBtn.setOnAction(e -> {
+            Optional<String[]> valuesOpt = promptFields("Add Address",
+                    "Type (BUSINESS/DELIVERY/FARM/BILLING)", "Address line", "City", "Area", "Postal code (optional)");
+            if (valuesOpt.isEmpty()) return;
+            String[] values = valuesOpt.get();
+            try {
+                Address addr = new Address();
+                addr.setUserId(currentUser.getUserId());
+                addr.setAddressType(values[0]);
+                addr.setAddressLine(values[1]);
+                addr.setCity(values[2]);
+                addr.setArea(values[3]);
+                addr.setPostalCode(values[4].isBlank() ? null : values[4]);
+                addressService.addAddress(addr);
+                refresh.run();
+            } catch (Exception ex) { showError(ex); }
+        });
 
-        HBox row = new HBox(14, iconLabel, info, spacer, amountLabel, remove);
-        row.setAlignment(Pos.CENTER_LEFT);
-        return row;
+        Button makeDefaultBtn = new Button("Set as Default");
+        makeDefaultBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            try { addressService.setDefaultAddress(currentUser.getUserId(), (int) row.get(0)); refresh.run(); }
+            catch (Exception ex) { showError(ex); }
+        });
+
+        Button deleteBtn = new Button("Delete");
+        deleteBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            try { addressService.deleteAddress(currentUser.getUserId(), (int) row.get(0)); refresh.run(); }
+            catch (Exception ex) { showError(ex); }
+        });
+
+        HBox top = new HBox(8, refreshBtn, addBtn, makeDefaultBtn, deleteBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
     }
 
-    private void showMessagesPage() {
-        setPageTitle("Messages");
-        VBox content = createPageContainer();
-        content.getChildren().add(
-                createEmptyState(
-                        "No conversations yet",
-                        "Buyer and supplier messages will appear here."
-                )
-        );
-        setContent(createScrollPane(content));
+    // =========================================================================
+    //  MESSAGES (shared by buyer + supplier views)
+    // =========================================================================
+
+    private BorderPane buildMessagesPanel() {
+        BorderPane panel = new BorderPane();
+
+        TableView<Row> convTable = buildTable("Conversation ID", "Buyer ID", "Supplier ID", "Order ID");
+        TableView<Row> msgTable = buildTable("Message ID", "Sender", "Text", "Read");
+
+        Runnable refreshConvs = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                requireLoggedIn();
+                List<Conversation> convs;
+                if ("SUPPLIER".equalsIgnoreCase(currentUser.getRole()) && currentSupplierProfile != null) {
+                    convs = conversationService.getConversationsBySupplierId(currentSupplierProfile.getSupplierId());
+                } else if (currentBuyerProfile != null) {
+                    convs = conversationService.getConversationsByBuyerId(currentBuyerProfile.getBuyerId());
+                } else {
+                    convs = List.of();
+                }
+                for (Conversation c : convs) {
+                    rows.add(new Row(c.getConversationId(), c.getBuyerId(), c.getSupplierId(), c.getOrderId()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            convTable.setItems(rows);
+        };
+        refreshConvs.run();
+
+        Runnable refreshMsgs = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            Row selected = convTable.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                try {
+                    for (Message m : messageService.getMessagesByConversationId((int) selected.get(0))) {
+                        rows.add(new Row(m.getMessageId(), m.getSenderUserId(), m.getMessageText(), m.isRead()));
+                    }
+                } catch (Exception ex) { showError(ex); }
+            }
+            msgTable.setItems(rows);
+        };
+        convTable.getSelectionModel().selectedItemProperty().addListener((obs, oldV, newV) -> refreshMsgs.run());
+
+        TextField newMsgField = new TextField();
+        newMsgField.setPromptText("Type a message...");
+        Button sendBtn = new Button("Send");
+        sendBtn.setOnAction(e -> {
+            Row selected = convTable.getSelectionModel().getSelectedItem();
+            if (selected == null) { info("Select a conversation first."); return; }
+            if (newMsgField.getText().isBlank()) return;
+            try {
+                Message m = new Message();
+                m.setConversationId((int) selected.get(0));
+                m.setSenderUserId(currentUser.getUserId());
+                m.setMessageText(newMsgField.getText());
+                messageService.addMessage(m);
+                newMsgField.clear();
+                refreshMsgs.run();
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        Button newConvBtn = new Button("Start / Open Conversation");
+        newConvBtn.setOnAction(e -> {
+            Optional<String[]> valuesOpt = promptFields("Start Conversation", "Buyer ID", "Supplier ID", "Order ID (optional)");
+            if (valuesOpt.isEmpty()) return;
+            String[] values = valuesOpt.get();
+            try {
+                Integer orderId = values[2].isBlank() ? null : Integer.parseInt(values[2].trim());
+                conversationService.getOrCreateConversation(
+                        Integer.parseInt(values[0].trim()), Integer.parseInt(values[1].trim()), orderId);
+                refreshConvs.run();
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        HBox top = new HBox(8, newConvBtn);
+        top.setPadding(new Insets(6));
+
+        HBox bottom = new HBox(8, newMsgField, sendBtn);
+        bottom.setPadding(new Insets(6));
+        HBox.setHgrow(newMsgField, Priority.ALWAYS);
+
+        SplitPane split = new SplitPane(convTable, msgTable);
+        split.setDividerPositions(0.45);
+
+        panel.setTop(top);
+        panel.setCenter(split);
+        panel.setBottom(bottom);
+        return panel;
     }
 
-    private VBox createConversationItem(String name, String preview) {
-        VBox item = new VBox(4);
-        item.setPadding(new Insets(12));
-        item.setStyle(
-                "-fx-background-color: #F8FAF9;" +
-                        "-fx-background-radius: 10;"
-        );
+    // =========================================================================
+    //  BUYER: NOTIFICATIONS
+    // =========================================================================
 
-        Label nameLabel = new Label(name);
-        nameLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
+    private BorderPane buildNotificationsPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Notification ID", "Title", "Message", "Type", "Read");
 
-        Label previewLabel = new Label(preview);
-        previewLabel.setTextFill(Color.web(MUTED));
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                requireLoggedIn();
+                for (Notification n : notificationService.getNotificationsByUserId(currentUser.getUserId())) {
+                    rows.add(new Row(n.getNotificationId(), n.getTitle(), n.getMessage(), n.getNotificationType(), n.isRead()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
 
-        item.getChildren().addAll(nameLabel, previewLabel);
-        return item;
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        Button markReadBtn = new Button("Mark Selected as Read");
+        markReadBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            try { notificationService.markAsRead((int) row.get(0)); refresh.run(); }
+            catch (Exception ex) { showError(ex); }
+        });
+
+        Button markAllReadBtn = new Button("Mark All as Read");
+        markAllReadBtn.setOnAction(e -> {
+            try { notificationService.markAllAsReadForUser(currentUser.getUserId()); refresh.run(); }
+            catch (Exception ex) { showError(ex); }
+        });
+
+        HBox top = new HBox(8, refreshBtn, markReadBtn, markAllReadBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
     }
 
-    private HBox createMessageBubble(String text, boolean incoming) {
-        Label bubble = new Label(text);
-        bubble.setWrapText(true);
-        bubble.setMaxWidth(420);
-        bubble.setPadding(new Insets(10, 14, 10, 14));
-        bubble.setStyle(
-                "-fx-background-color: " + (incoming ? PRIMARY_LIGHT : PRIMARY) + ";" +
-                        "-fx-text-fill: " + (incoming ? TEXT : "white") + ";" +
-                        "-fx-background-radius: 14;"
-        );
+    // =========================================================================
+    //  COMPLAINTS (buyer: file + view own, admin: resolve all)
+    // =========================================================================
 
-        HBox row = new HBox(bubble);
-        row.setAlignment(incoming ? Pos.CENTER_LEFT : Pos.CENTER_RIGHT);
-        return row;
-    }
+    private BorderPane buildComplaintsPanel(boolean buyerView) {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Complaint ID", "Order ID", "Submitted By", "Against", "Type", "Status", "Description");
 
-    private void showSimpleCardsPage(String pageName, String heading,
-                                     List<SimpleCardData> data) {
-        setPageTitle(pageName);
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                requireLoggedIn();
+                List<Complaint> complaints = buyerView
+                        ? complaintService.getComplaintsSubmittedBy(currentUser.getUserId())
+                        : complaintService.getComplaintsByStatus("OPEN");
+                for (Complaint c : complaints) {
+                    rows.add(new Row(c.getComplaintId(), c.getOrderId(), c.getSubmittedBy(),
+                            c.getAgainstUserId(), c.getComplaintType(), c.getComplaintStatus(), c.getDescription()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
 
-        VBox content = createPageContainer();
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
 
-        Label title = new Label(heading);
-        title.setFont(Font.font("Arial", FontWeight.BOLD, 20));
+        HBox top = new HBox(8, refreshBtn);
+        top.setPadding(new Insets(6));
 
-        VBox cards = new VBox(12);
-
-        for (SimpleCardData item : data) {
-            HBox card = new HBox(18);
-            card.setAlignment(Pos.CENTER_LEFT);
-            card.setPadding(new Insets(18));
-            card.setStyle(cardStyle(14));
-
-            Label icon = new Label("▣");
-            icon.setAlignment(Pos.CENTER);
-            icon.setPrefSize(48, 48);
-            icon.setStyle(
-                    "-fx-background-color: " + PRIMARY_LIGHT + ";" +
-                            "-fx-background-radius: 12;" +
-                            "-fx-font-size: 20px;"
-            );
-
-            VBox information = new VBox(4);
-            Label first = new Label(item.first());
-            first.setFont(Font.font("Arial", FontWeight.BOLD, 15));
-
-            Label second = new Label(item.second());
-            second.setTextFill(Color.web(MUTED));
-
-            Label description = new Label(item.description());
-            description.setTextFill(Color.web(MUTED));
-
-            information.getChildren().addAll(first, second, description);
-
-            Region spacer = new Region();
-            HBox.setHgrow(spacer, Priority.ALWAYS);
-
-            Label status = new Label(item.status());
-            status.setStyle(
-                    "-fx-background-color: " + PRIMARY_LIGHT + ";" +
-                            "-fx-text-fill: " + PRIMARY_DARK + ";" +
-                            "-fx-background-radius: 10;" +
-                            "-fx-padding: 6 12;" +
-                            "-fx-font-weight: bold;"
-            );
-
-            card.getChildren().addAll(icon, information, spacer, status);
-            cards.getChildren().add(card);
+        if (!buyerView) {
+            Button resolveBtn = new Button("Resolve Selected");
+            resolveBtn.setOnAction(e -> {
+                Row row = table.getSelectionModel().getSelectedItem();
+                if (row == null) return;
+                Optional<String[]> valuesOpt = promptFields("Resolve Complaint", "New status (RESOLVED/REJECTED)", "Admin response");
+                if (valuesOpt.isEmpty()) return;
+                String[] values = valuesOpt.get();
+                try {
+                    complaintService.resolveComplaint((int) row.get(0), values[0], values[1]);
+                    refresh.run();
+                } catch (Exception ex) { showError(ex); }
+            });
+            top.getChildren().add(resolveBtn);
         }
 
-        content.getChildren().addAll(title, cards);
-        setContent(createScrollPane(content));
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
     }
 
-    private VBox createEmptyState(String title, String description) {
-        VBox box = new VBox(14);
-        box.setAlignment(Pos.CENTER);
-        box.setPadding(new Insets(70));
-        box.setMinHeight(420);
-        box.setStyle(cardStyle(16));
-
-        Label icon = new Label("▢");
-        icon.setFont(Font.font("Arial", 52));
-        icon.setTextFill(Color.web("#9CA3AF"));
-
-        Label titleLabel = new Label(title);
-        titleLabel.setFont(Font.font("Arial", FontWeight.BOLD, 22));
-        titleLabel.setTextFill(Color.web(TEXT));
-
-        Label descriptionLabel = new Label(description);
-        descriptionLabel.setFont(Font.font("Arial", 14));
-        descriptionLabel.setTextFill(Color.web(MUTED));
-        descriptionLabel.setWrapText(true);
-        descriptionLabel.setMaxWidth(520);
-        descriptionLabel.setAlignment(Pos.CENTER);
-
-        box.getChildren().addAll(icon, titleLabel, descriptionLabel);
-        return box;
+    private void fileComplaintDialog(int orderId, int againstUserId) {
+        Optional<String[]> valuesOpt = promptFields("File Complaint", "Complaint type", "Description");
+        if (valuesOpt.isEmpty()) return;
+        String[] values = valuesOpt.get();
+        try {
+            Complaint complaint = new Complaint();
+            complaint.setOrderId(orderId);
+            complaint.setSubmittedBy(currentUser.getUserId());
+            complaint.setAgainstUserId(againstUserId);
+            complaint.setComplaintType(values[0]);
+            complaint.setDescription(values[1]);
+            complaintService.addComplaint(complaint);
+            info("Complaint filed.");
+        } catch (Exception ex) { showError(ex); }
     }
 
-    // =========================================================
-    // REUSABLE UI COMPONENTS
-    // =========================================================
+    // =========================================================================
+    //  SUPPLIER: PROFILE
+    // =========================================================================
 
-    private VBox createPageContainer() {
-        VBox content = new VBox(20);
-        content.setPadding(new Insets(5, 28, 28, 28));
-        return content;
-    }
+    private BorderPane buildSupplierProfilePanel() {
+        BorderPane panel = new BorderPane();
+        TextArea info = new TextArea();
+        info.setEditable(false);
 
-    private ScrollPane createScrollPane(Region content) {
-        ScrollPane scroll = new ScrollPane(content);
-        scroll.setFitToWidth(true);
-        scroll.setStyle(
-                "-fx-background: " + BACKGROUND + ";" +
-                        "-fx-background-color: " + BACKGROUND + ";" +
-                        "-fx-border-color: transparent;"
-        );
-        return scroll;
-    }
+        Runnable refresh = () -> {
+            try {
+                currentSupplierProfile = supplierProfileService.getSupplierByUserId(currentUser.getUserId());
+                info.setText("Supplier ID: " + currentSupplierProfile.getSupplierId()
+                        + "\nType: " + currentSupplierProfile.getSupplierType()
+                        + "\nFarm/Business name: " + currentSupplierProfile.getFarmOrBusinessName()
+                        + "\nCNIC: " + currentSupplierProfile.getCnicNumber()
+                        + "\nVerification status: " + currentSupplierProfile.getVerificationStatus()
+                        + "\nAverage rating: " + currentSupplierProfile.getAverageRating()
+                        + "\nCompleted orders: " + currentSupplierProfile.getTotalCompletedOrders());
+            } catch (Exception ex) {
+                info.setText("No supplier profile found yet. Create one below.");
+                currentSupplierProfile = null;
+            }
+        };
+        refresh.run();
 
-    private VBox createMetricCard(String title, String value, String icon, String color) {
-        VBox card = new VBox(9);
-        card.setPadding(new Insets(18));
-        card.setPrefWidth(220);
-        card.setStyle(cardStyle(14));
-        card.setEffect(createSmallShadow());
-
-        HBox top = new HBox();
-        Label iconLabel = new Label(icon);
-        iconLabel.setAlignment(Pos.CENTER);
-        iconLabel.setPrefSize(42, 42);
-        iconLabel.setStyle(
-                "-fx-background-color: derive(" + color + ", 85%);" +
-                        "-fx-background-radius: 10;" +
-                        "-fx-font-size: 18px;"
-        );
-        top.getChildren().add(iconLabel);
-
-        Label titleLabel = new Label(title);
-        titleLabel.setTextFill(Color.web(MUTED));
-
-        Label valueLabel = new Label(value);
-        valueLabel.setFont(Font.font("Arial", FontWeight.BOLD, 24));
-
-        card.getChildren().addAll(top, titleLabel, valueLabel);
-        return card;
-    }
-
-    private HBox createTitleActionRow(String title, String actionText, Runnable action) {
-        Label titleLabel = new Label(title);
-        titleLabel.setFont(Font.font("Arial", FontWeight.BOLD, 20));
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-
-        HBox row = new HBox(titleLabel, spacer);
-        row.setAlignment(Pos.CENTER_LEFT);
-
-        if (actionText != null) {
-            Button actionButton = createPrimaryButton(actionText);
-            actionButton.setOnAction(event -> action.run());
-            row.getChildren().add(actionButton);
-        }
-
-        return row;
-    }
-
-    private VBox createCardContainer(Region node) {
-        VBox box = new VBox(node);
-        box.setPadding(new Insets(18));
-        box.setStyle(cardStyle(16));
-        return box;
-    }
-
-    private Button createPrimaryButton(String text) {
-        Button button = new Button(text);
-        button.setCursor(Cursor.HAND);
-        button.setPrefHeight(42);
-        button.setStyle(
-                "-fx-background-color: " + PRIMARY + ";" +
-                        "-fx-text-fill: white;" +
-                        "-fx-font-size: 14px;" +
-                        "-fx-font-weight: bold;" +
-                        "-fx-background-radius: 9;" +
-                        "-fx-padding: 0 18;"
-        );
-
-        button.setOnMouseEntered(event -> button.setStyle(
-                "-fx-background-color: " + PRIMARY_DARK + ";" +
-                        "-fx-text-fill: white;" +
-                        "-fx-font-size: 14px;" +
-                        "-fx-font-weight: bold;" +
-                        "-fx-background-radius: 9;" +
-                        "-fx-padding: 0 18;"
-        ));
-
-        button.setOnMouseExited(event -> button.setStyle(
-                "-fx-background-color: " + PRIMARY + ";" +
-                        "-fx-text-fill: white;" +
-                        "-fx-font-size: 14px;" +
-                        "-fx-font-weight: bold;" +
-                        "-fx-background-radius: 9;" +
-                        "-fx-padding: 0 18;"
-        ));
-
-        return button;
-    }
-
-    private Button createSecondaryButton(String text) {
-        Button button = new Button(text);
-        button.setCursor(Cursor.HAND);
-        button.setPrefHeight(42);
-        button.setStyle(
-                "-fx-background-color: white;" +
-                        "-fx-text-fill: " + PRIMARY_DARK + ";" +
-                        "-fx-font-size: 14px;" +
-                        "-fx-font-weight: bold;" +
-                        "-fx-border-color: #BFD9C8;" +
-                        "-fx-border-radius: 9;" +
-                        "-fx-background-radius: 9;" +
-                        "-fx-padding: 0 18;"
-        );
-        return button;
-    }
-
-    private Button createIconButton(String icon) {
-        Button button = new Button(icon);
-        button.setCursor(Cursor.HAND);
-        button.setPrefSize(42, 42);
-        button.setStyle(
-                "-fx-background-color: #F7F9F8;" +
-                        "-fx-background-radius: 21;" +
-                        "-fx-border-color: " + BORDER + ";" +
-                        "-fx-border-radius: 21;" +
-                        "-fx-font-size: 16px;"
-        );
-        return button;
-    }
-
-    private TextField createTextField(String prompt) {
-        TextField field = new TextField();
-        field.setPromptText(prompt);
-        field.setPrefHeight(44);
-        field.setMaxWidth(Double.MAX_VALUE);
-        field.setStyle(inputStyle());
-        return field;
-    }
-
-    private PasswordField createPasswordField(String prompt) {
-        PasswordField field = new PasswordField();
-        field.setPromptText(prompt);
-        field.setPrefHeight(44);
-        field.setMaxWidth(Double.MAX_VALUE);
-        field.setStyle(inputStyle());
-        return field;
-    }
-
-    private Label fieldLabel(String text) {
-        Label label = new Label(text);
-        label.setFont(Font.font("Arial", FontWeight.BOLD, 13));
-        label.setTextFill(Color.web(TEXT));
-        return label;
-    }
-
-    private Separator createSeparator() {
-        Separator separator = new Separator();
-        separator.setStyle("-fx-background-color: " + BORDER + ";");
-        return separator;
-    }
-
-    private Region createSpacer(double height) {
-        Region spacer = new Region();
-        spacer.setPrefHeight(height);
-        return spacer;
-    }
-
-    private Region createHorizontalSpacer() {
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        return spacer;
-    }
-
-    private String inputStyle() {
-        return "-fx-background-color: #FAFBFA;" +
-                "-fx-border-color: " + BORDER + ";" +
-                "-fx-border-radius: 9;" +
-                "-fx-background-radius: 9;" +
-                "-fx-padding: 0 12;" +
-                "-fx-font-size: 14px;";
-    }
-
-    private String cardStyle(int radius) {
-        return "-fx-background-color: " + CARD + ";" +
-                "-fx-background-radius: " + radius + ";" +
-                "-fx-border-color: " + BORDER + ";" +
-                "-fx-border-radius: " + radius + ";";
-    }
-
-    private DropShadow createShadow() {
-        DropShadow shadow = new DropShadow();
-        shadow.setRadius(22);
-        shadow.setOffsetY(6);
-        shadow.setColor(Color.rgb(15, 23, 42, 0.12));
-        return shadow;
-    }
-
-    private DropShadow createSmallShadow() {
-        DropShadow shadow = new DropShadow();
-        shadow.setRadius(9);
-        shadow.setOffsetY(3);
-        shadow.setColor(Color.rgb(15, 23, 42, 0.07));
-        return shadow;
-    }
-
-    private void setPageTitle(String title) {
-        if (pageTitle != null) {
-            pageTitle.setText(title);
-        }
-    }
-
-    private void setContent(javafx.scene.Node node) {
-        contentArea.getChildren().setAll(node);
-    }
-
-    private String capitalize(String text) {
-        if (text == null || text.isEmpty()) {
-            return "";
-        }
-        return text.substring(0, 1).toUpperCase()
-                + text.substring(1).toLowerCase();
-    }
-
-    // =========================================================
-    // LIVE SERVICE / DATABASE BINDING
-    // =========================================================
-
-    private void showServiceTablePage(String title, String serviceClass, String loadMethod,
-                                      String ignored, String[] actionLabels, String[] actionValues,
-                                      String updateMethod, String idGetter) {
-        setPageTitle(title);
-        VBox box = createPageContainer();
-        Label state = new Label("Loading data...");
-        box.getChildren().add(state);
-        setContent(createScrollPane(box));
-        runAsync(() -> invokeService(serviceClass, loadMethod), result -> {
-            box.getChildren().clear();
-            List<?> rows = asList(result);
-            box.getChildren().add(createLiveTable(rows, serviceClass, loadMethod, null,
-                    actionLabels, actionValues, updateMethod, idGetter, box));
+        Button createBtn = new Button("Create Supplier Profile");
+        createBtn.setOnAction(e -> {
+            Optional<String[]> valuesOpt = promptFields("Create Supplier Profile",
+                    "Type (FARMER/DISTRIBUTOR/etc.)", "Farm/Business name", "CNIC number", "Registration number (optional)");
+            if (valuesOpt.isEmpty()) return;
+            String[] values = valuesOpt.get();
+            try {
+                SupplierProfile profile = new SupplierProfile();
+                profile.setUserId(currentUser.getUserId());
+                profile.setSupplierType(values[0]);
+                profile.setFarmOrBusinessName(values[1]);
+                profile.setCnicNumber(values[2]);
+                profile.setRegistrationNumber(values[3].isBlank() ? null : values[3]);
+                supplierProfileService.addSupplierProfile(profile);
+                refresh.run();
+            } catch (Exception ex) { showError(ex); }
         });
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        HBox top = new HBox(8, refreshBtn, createBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(info);
+        return panel;
     }
 
-    private void showIdLookupPage(String title, String serviceClass, String method, String prompt) {
-        setPageTitle(title);
-        VBox box = createPageContainer();
-        TextField id = createTextField(prompt);
-        id.setMaxWidth(260);
-        Button load = createPrimaryButton("Search");
-        HBox controls = new HBox(12, id, load); controls.setAlignment(Pos.CENTER_LEFT);
-        box.getChildren().add(controls);
-        load.setOnAction(e -> {
-            Integer value = positiveInt(id.getText(), prompt);
-            if (value != null) loadSingleInto(box, serviceClass, method, value);
+    // =========================================================================
+    //  SUPPLIER: LISTINGS
+    // =========================================================================
+
+    private BorderPane buildSupplierListingsPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Listing ID", "Product ID", "Price/Unit", "Available Qty", "Min Order", "Unit", "Status");
+
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                requireSupplier();
+                for (SupplierProduct sp : supplierProductService.getListingsBySupplierId(currentSupplierProfile.getSupplierId())) {
+                    rows.add(new Row(sp.getSupplierProductId(), sp.getProductId(), sp.getPricePerUnit(),
+                            sp.getAvailableQuantity(), sp.getMinimumOrderQuantity(), sp.getUnitType(), sp.getListingStatus()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        Button addBtn = new Button("Add Listing");
+        addBtn.setOnAction(e -> {
+            Optional<String[]> valuesOpt = promptFields("Add Listing",
+                    "Product ID", "Price per unit", "Available quantity", "Minimum order quantity", "Unit type", "Quality grade (optional)");
+            if (valuesOpt.isEmpty()) return;
+            String[] values = valuesOpt.get();
+            try {
+                requireSupplier();
+                SupplierProduct sp = new SupplierProduct();
+                sp.setSupplierId(currentSupplierProfile.getSupplierId());
+                sp.setProductId(Integer.parseInt(values[0].trim()));
+                sp.setPricePerUnit(new BigDecimal(values[1].trim()));
+                sp.setAvailableQuantity(new BigDecimal(values[2].trim()));
+                sp.setMinimumOrderQuantity(new BigDecimal(values[3].trim()));
+                sp.setUnitType(values[4]);
+                sp.setQualityGrade(values[5].isBlank() ? null : values[5]);
+                supplierProductService.addSupplierProduct(sp);
+                refresh.run();
+            } catch (Exception ex) { showError(ex); }
         });
-        setContent(createScrollPane(box));
-    }
 
-    private void showIdListPage(String title, String serviceClass, String method, String prompt) {
-        setPageTitle(title);
-        VBox box = createPageContainer();
-        TextField id = createTextField(prompt);
-        id.setMaxWidth(260);
-        Button load = createPrimaryButton("Load");
-        HBox controls = new HBox(12, id, load); controls.setAlignment(Pos.CENTER_LEFT);
-        box.getChildren().add(controls);
-        load.setOnAction(e -> {
-            Integer value = positiveInt(id.getText(), prompt);
-            if (value != null) loadServiceListInto(box, serviceClass, method, value);
+        Button updateStatusBtn = new Button("Update Listing Status");
+        updateStatusBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            Optional<String> statusOpt = textPrompt("Update Status", "New status (PENDING/APPROVED/REJECTED/UNAVAILABLE):");
+            if (statusOpt.isEmpty() || statusOpt.get().isBlank()) return;
+            try { supplierProductService.updateListingStatus((int) row.get(0), statusOpt.get()); refresh.run(); }
+            catch (Exception ex) { showError(ex); }
         });
-        setContent(createScrollPane(box));
+
+        HBox top = new HBox(8, refreshBtn, addBtn, updateStatusBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
     }
 
-    private void loadSingleInto(VBox box, String serviceClass, String method, Object arg) {
-        runAsync(() -> invokeService(serviceClass, method, arg), result -> {
-            while (box.getChildren().size() > 1) box.getChildren().remove(1);
-            box.getChildren().add(createLiveTable(result == null ? Collections.emptyList() : List.of(result),
-                    serviceClass, method, arg, new String[0], new String[0], null, null, box));
+    // =========================================================================
+    //  SUPPLIER: INCOMING ORDERS
+    // =========================================================================
+
+    private BorderPane buildSupplierOrdersPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Order ID", "Buyer ID", "Total", "Order Status", "Payment Status");
+
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                requireSupplier();
+                for (Order o : orderService.getOrdersBySupplierId(currentSupplierProfile.getSupplierId())) {
+                    rows.add(new Row(o.getOrderId(), o.getBuyerId(), o.getTotalAmount(),
+                            o.getOrderStatus(), o.getPaymentStatus()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        Button updateStatusBtn = new Button("Update Order Status");
+        updateStatusBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            Optional<String> statusOpt = textPrompt("Update Status",
+                    "New status (PENDING/ACCEPTED/PROCESSING/DISPATCHED/DELIVERED/CANCELLED/REJECTED):");
+            if (statusOpt.isEmpty() || statusOpt.get().isBlank()) return;
+            try { orderService.updateOrderStatus((int) row.get(0), statusOpt.get()); refresh.run(); }
+            catch (Exception ex) { showError(ex); }
         });
-    }
 
-    private void loadServiceListInto(VBox box, String serviceClass, String method, Object arg) {
-        loadServiceListWithActions(box, serviceClass, method, arg,
-                new String[0], new String[0], null, null);
-    }
-
-    private void loadServiceListWithActions(VBox box, String serviceClass, String method, Object arg,
-                                            String[] labels, String[] values, String updateMethod, String idGetter) {
-        runAsync(() -> invokeService(serviceClass, method, arg), result -> {
-            while (box.getChildren().size() > 1) box.getChildren().remove(1);
-            box.getChildren().add(createLiveTable(asList(result), serviceClass, method, arg,
-                    labels, values, updateMethod, idGetter, box));
+        Button viewItemsBtn = new Button("View Order Items");
+        viewItemsBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            showOrderItemsDialog((int) row.get(0));
         });
+
+        HBox top = new HBox(8, refreshBtn, updateStatusBtn, viewItemsBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
     }
 
-    private TableView<Object> createLiveTable(List<?> input, String serviceClass, String reloadMethod,
-                                              Object reloadArg, String[] actionLabels, String[] actionValues,
-                                              String updateMethod, String idGetter, VBox host) {
-        TableView<Object> table = new TableView<>();
-        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        table.setPrefHeight(620);
-        List<Object> rows = new ArrayList<>(); rows.addAll(input); table.getItems().setAll(rows);
-        if (rows.isEmpty()) {
-            table.setPlaceholder(new Label("No database records found."));
-            return table;
-        }
-        List<Method> getters = Arrays.stream(rows.get(0).getClass().getMethods())
-                .filter(m -> m.getParameterCount() == 0)
-                .filter(m -> (m.getName().startsWith("get") || m.getName().startsWith("is")))
-                .filter(m -> !m.getName().equals("getClass"))
-                .sorted(Comparator.comparing(Method::getName)).limit(12).collect(Collectors.toList());
-        for (Method getter : getters) {
-            String n = getter.getName().startsWith("get") ? getter.getName().substring(3) : getter.getName().substring(2);
-            TableColumn<Object,String> col = new TableColumn<>(humanize(n));
-            col.setCellValueFactory(c -> new ReadOnlyStringWrapper(readValue(c.getValue(), getter)));
+    private void showOrderItemsDialog(int orderId) {
+        Stage dialog = new Stage();
+        dialog.setTitle("Order Items");
+        TableView<Row> table = buildTable("Item ID", "Supplier Product ID", "Quantity", "Unit Price", "Subtotal");
+        ObservableList<Row> rows = FXCollections.observableArrayList();
+        try {
+            for (OrderItem oi : orderItemService.getItemsByOrderId(orderId)) {
+                rows.add(new Row(oi.getOrderItemId(), oi.getSupplierProductId(), oi.getQuantity(), oi.getUnitPrice(), oi.getSubtotal()));
+            }
+        } catch (Exception ex) { showError(ex); }
+        table.setItems(rows);
+        dialog.setScene(new Scene(new BorderPane(table), 600, 350));
+        dialog.show();
+    }
+
+    // =========================================================================
+    //  DELIVERIES
+    // =========================================================================
+
+    private BorderPane buildDeliveriesPanel() {
+        BorderPane panel = new BorderPane();
+        TextField orderIdField = new TextField();
+        orderIdField.setPromptText("Order ID");
+        orderIdField.setPrefWidth(100);
+        Button loadBtn = new Button("Load Delivery");
+
+        TextArea info = new TextArea();
+        info.setEditable(false);
+
+        loadBtn.setOnAction(e -> {
+            try {
+                int orderId = Integer.parseInt(orderIdField.getText().trim());
+                Delivery d;
+                try {
+                    d = deliveryService.getDeliveryByOrderId(orderId);
+                } catch (Exception notFound) {
+                    Optional<String> methodOpt = textPrompt("New Delivery", "No delivery yet. Delivery method?");
+                    if (methodOpt.isEmpty() || methodOpt.get().isBlank()) return;
+                    Delivery nd = new Delivery();
+                    nd.setOrderId(orderId);
+                    nd.setDeliveryMethod(methodOpt.get());
+                    deliveryService.addDelivery(nd);
+                    d = deliveryService.getDeliveryByOrderId(orderId);
+                }
+                info.setText("Delivery ID: " + d.getDeliveryId()
+                        + "\nMethod: " + d.getDeliveryMethod()
+                        + "\nStatus: " + d.getDeliveryStatus()
+                        + "\nDriver: " + d.getDriverName()
+                        + "\nDriver phone: " + d.getDriverPhone()
+                        + "\nVehicle: " + d.getVehicleNumber());
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        Button dispatchBtn = new Button("Mark Dispatched");
+        dispatchBtn.setOnAction(e -> {
+            try {
+                Delivery d = deliveryService.getDeliveryByOrderId(Integer.parseInt(orderIdField.getText().trim()));
+                deliveryService.markAsDispatched(d.getDeliveryId());
+                loadBtn.fire();
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        Button deliveredBtn = new Button("Mark Delivered");
+        deliveredBtn.setOnAction(e -> {
+            try {
+                Delivery d = deliveryService.getDeliveryByOrderId(Integer.parseInt(orderIdField.getText().trim()));
+                Optional<String[]> valuesOpt = promptFields("Mark Delivered", "Delivery proof (optional)", "Received by (optional)");
+                if (valuesOpt.isEmpty()) return;
+                String[] values = valuesOpt.get();
+                deliveryService.markAsDelivered(d.getDeliveryId(), values[0], values[1]);
+                loadBtn.fire();
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        Button logisticsBtn = new Button("Update Logistics Info");
+        logisticsBtn.setOnAction(e -> {
+            try {
+                Delivery d = deliveryService.getDeliveryByOrderId(Integer.parseInt(orderIdField.getText().trim()));
+                Optional<String[]> valuesOpt = promptFields("Update Logistics", "Driver name", "Driver phone", "Vehicle number");
+                if (valuesOpt.isEmpty()) return;
+                String[] values = valuesOpt.get();
+                deliveryService.updateLogisticsInfo(d.getDeliveryId(), values[0], values[1], values[2]);
+                loadBtn.fire();
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        HBox top = new HBox(8, new Label("Order ID:"), orderIdField, loadBtn, dispatchBtn, deliveredBtn, logisticsBtn);
+        top.setPadding(new Insets(6));
+        top.setAlignment(Pos.CENTER_LEFT);
+
+        panel.setTop(top);
+        panel.setCenter(info);
+        return panel;
+    }
+
+    // =========================================================================
+    //  SUPPLIER: REVIEWS
+    // =========================================================================
+
+    private BorderPane buildSupplierReviewsPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Review ID", "Order ID", "Buyer ID", "Rating", "Comments");
+        Label avgLabel = new Label("Average rating: -");
+
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                requireSupplier();
+                for (Review r : reviewService.getReviewsBySupplierId(currentSupplierProfile.getSupplierId())) {
+                    rows.add(new Row(r.getReviewId(), r.getOrderId(), r.getBuyerId(), r.getRating(), r.getComments()));
+                }
+                double avg = reviewService.getAverageRatingForSupplier(currentSupplierProfile.getSupplierId());
+                avgLabel.setText("Average rating: " + avg);
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        HBox top = new HBox(12, refreshBtn, avgLabel);
+        top.setAlignment(Pos.CENTER_LEFT);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
+    }
+
+    // =========================================================================
+    //  ADMIN: VERIFY SUPPLIERS / BUYERS
+    // =========================================================================
+
+    private BorderPane buildVerifySuppliersPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Supplier ID", "User ID", "Farm/Business", "CNIC", "Status");
+
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                for (SupplierProfile sp : supplierProfileService.getPendingVerifications()) {
+                    rows.add(new Row(sp.getSupplierId(), sp.getUserId(), sp.getFarmOrBusinessName(),
+                            sp.getCnicNumber(), sp.getVerificationStatus()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        Button approveBtn = new Button("Approve");
+        approveBtn.setOnAction(e -> updateSupplierVerification(table, "VERIFIED", refresh));
+        Button rejectBtn = new Button("Reject");
+        rejectBtn.setOnAction(e -> updateSupplierVerification(table, "REJECTED", refresh));
+
+        HBox top = new HBox(8, refreshBtn, approveBtn, rejectBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
+    }
+
+    private void updateSupplierVerification(TableView<Row> table, String status, Runnable refresh) {
+        Row row = table.getSelectionModel().getSelectedItem();
+        if (row == null) return;
+        int supplierId = (int) row.get(0);
+        try {
+            supplierProfileService.updateVerificationStatus(supplierId, status);
+            logAdminAction("VERIFY_SUPPLIER_" + status, "SUPPLIER_PROFILE", supplierId, null);
+            refresh.run();
+        } catch (Exception ex) { showError(ex); }
+    }
+
+    private BorderPane buildVerifyBuyersPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Buyer ID", "User ID", "Business Name", "Type", "Status");
+
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                for (BuyerProfile bp : buyerProfileService.getPendingVerifications()) {
+                    rows.add(new Row(bp.getBuyerId(), bp.getUserId(), bp.getBusinessName(),
+                            bp.getBusinessType(), bp.getVerificationStatus()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        Button approveBtn = new Button("Approve");
+        approveBtn.setOnAction(e -> updateBuyerVerification(table, "VERIFIED", refresh));
+        Button rejectBtn = new Button("Reject");
+        rejectBtn.setOnAction(e -> updateBuyerVerification(table, "REJECTED", refresh));
+
+        HBox top = new HBox(8, refreshBtn, approveBtn, rejectBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
+    }
+
+    private void updateBuyerVerification(TableView<Row> table, String status, Runnable refresh) {
+        Row row = table.getSelectionModel().getSelectedItem();
+        if (row == null) return;
+        int buyerId = (int) row.get(0);
+        try {
+            buyerProfileService.updateVerificationStatus(buyerId, status);
+            logAdminAction("VERIFY_BUYER_" + status, "BUYER_PROFILE", buyerId, null);
+            refresh.run();
+        } catch (Exception ex) { showError(ex); }
+    }
+
+    // =========================================================================
+    //  ADMIN: CATEGORIES
+    // =========================================================================
+
+    private BorderPane buildCategoriesPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Category ID", "Name", "Active");
+
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                for (Category c : categoryService.getAllCategories()) {
+                    rows.add(new Row(c.getCategoryId(), c.getCategoryName(), c.isActive()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        Button addBtn = new Button("Add Category");
+        addBtn.setOnAction(e -> {
+            Optional<String[]> valuesOpt = promptFields("Add Category", "Name", "Description (optional)");
+            if (valuesOpt.isEmpty()) return;
+            String[] values = valuesOpt.get();
+            try {
+                Category cat = new Category();
+                cat.setCategoryName(values[0]);
+                cat.setDescription(values[1].isBlank() ? null : values[1]);
+                categoryService.addCategory(cat);
+                logAdminAction("ADD_CATEGORY", "CATEGORY", null, values[0]);
+                refresh.run();
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        Button toggleBtn = new Button("Toggle Active");
+        toggleBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            boolean active = (boolean) row.get(2);
+            try { categoryService.setCategoryActiveStatus((int) row.get(0), !active); refresh.run(); }
+            catch (Exception ex) { showError(ex); }
+        });
+
+        HBox top = new HBox(8, refreshBtn, addBtn, toggleBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
+    }
+
+    // =========================================================================
+    //  ADMIN: REFUNDS
+    // =========================================================================
+
+    private BorderPane buildRefundsPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Refund ID", "Payment ID", "Order ID", "Amount", "Reason", "Status");
+
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                for (Refund r : refundService.getPendingRefunds()) {
+                    rows.add(new Row(r.getRefundId(), r.getPaymentId(), r.getOrderId(),
+                            r.getRefundAmount(), r.getRefundReason(), r.getRefundStatus()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        Button updateBtn = new Button("Update Status");
+        updateBtn.setOnAction(e -> {
+            Row row = table.getSelectionModel().getSelectedItem();
+            if (row == null) return;
+            Optional<String> statusOpt = textPrompt("Update Refund", "New status (REQUESTED/APPROVED/REJECTED/COMPLETED):");
+            if (statusOpt.isEmpty() || statusOpt.get().isBlank()) return;
+            try {
+                refundService.updateRefundStatus((int) row.get(0), statusOpt.get());
+                logAdminAction("UPDATE_REFUND_" + statusOpt.get(), "REFUND", (int) row.get(0), null);
+                refresh.run();
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        HBox top = new HBox(8, refreshBtn, updateBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
+    }
+
+    // =========================================================================
+    //  ADMIN: MARKET PRICES
+    // =========================================================================
+
+    private BorderPane buildMarketPricesPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("ID", "Product ID", "City/Market", "Min", "Max", "Avg", "Unit");
+        TextField productIdField = new TextField();
+        productIdField.setPromptText("Product ID");
+        productIdField.setPrefWidth(100);
+
+        Button loadBtn = new Button("Load History");
+        loadBtn.setOnAction(e -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                int productId = Integer.parseInt(productIdField.getText().trim());
+                for (MarketPrice mp : marketPriceService.getPriceHistoryByProductId(productId)) {
+                    rows.add(new Row(mp.getMarketPriceId(), mp.getProductId(), mp.getCityOrMarket(),
+                            mp.getMinimumPrice(), mp.getMaximumPrice(), mp.getAveragePrice(), mp.getUnitType()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        });
+
+        Button addBtn = new Button("Add Market Price");
+        addBtn.setOnAction(e -> {
+            Optional<String[]> valuesOpt = promptFields("Add Market Price",
+                    "Product ID", "City/Market", "Minimum price", "Maximum price", "Average price", "Unit type",
+                    "Price date (YYYY-MM-DD)");
+            if (valuesOpt.isEmpty()) return;
+            String[] values = valuesOpt.get();
+            try {
+                MarketPrice mp = new MarketPrice();
+                mp.setProductId(Integer.parseInt(values[0].trim()));
+                mp.setCityOrMarket(values[1]);
+                mp.setMinimumPrice(new BigDecimal(values[2].trim()));
+                mp.setMaximumPrice(new BigDecimal(values[3].trim()));
+                mp.setAveragePrice(new BigDecimal(values[4].trim()));
+                mp.setUnitType(values[5]);
+                mp.setPriceDate(java.sql.Date.valueOf(values[6].trim()));
+                mp.setEnteredBy(currentUser.getUserId());
+                marketPriceService.addMarketPrice(mp);
+                info("Market price added.");
+            } catch (Exception ex) { showError(ex); }
+        });
+
+        HBox top = new HBox(8, new Label("Product ID:"), productIdField, loadBtn, addBtn);
+        top.setAlignment(Pos.CENTER_LEFT);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
+    }
+
+    // =========================================================================
+    //  ADMIN: LOGS
+    // =========================================================================
+
+    private BorderPane buildAdminLogsPanel() {
+        BorderPane panel = new BorderPane();
+        TableView<Row> table = buildTable("Log ID", "Admin User ID", "Action", "Entity Type", "Entity ID", "Details");
+
+        Runnable refresh = () -> {
+            ObservableList<Row> rows = FXCollections.observableArrayList();
+            try {
+                for (AdminLog log : adminLogService.getAllLogs()) {
+                    rows.add(new Row(log.getLogId(), log.getAdminUserId(), log.getAction(),
+                            log.getEntityType(), log.getEntityId(), log.getDetails()));
+                }
+            } catch (Exception ex) { showError(ex); }
+            table.setItems(rows);
+        };
+        refresh.run();
+
+        Button refreshBtn = new Button("Refresh");
+        refreshBtn.setOnAction(e -> refresh.run());
+
+        HBox top = new HBox(8, refreshBtn);
+        top.setPadding(new Insets(6));
+
+        panel.setTop(top);
+        panel.setCenter(table);
+        return panel;
+    }
+
+    /** Best-effort audit trail: silently no-ops if logging fails, so it never blocks the main action. */
+    private void logAdminAction(String action, String entityType, Integer entityId, String details) {
+        try {
+            AdminLog log = new AdminLog();
+            log.setAdminUserId(currentUser.getUserId());
+            log.setAction(action);
+            log.setEntityType(entityType);
+            log.setEntityId(entityId);
+            log.setDetails(details);
+            adminLogService.addLog(log);
+        } catch (Exception ignore) { /* logging failures should not block admin actions */ }
+    }
+
+    // =========================================================================
+    //  SHARED HELPERS
+    // =========================================================================
+
+    /** Lightweight generic row wrapper so one TableView builder works for every table in the app. */
+    private static class Row {
+        private final Object[] values;
+        Row(Object... values) { this.values = values; }
+        Object get(int i) { return values[i]; }
+    }
+
+    private TableView<Row> buildTable(String... columnNames) {
+        TableView<Row> table = new TableView<>();
+        table.getStyleClass().add("modern-table");
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        table.setPlaceholder(new Label("No records found"));
+        for (int i = 0; i < columnNames.length; i++) {
+            final int idx = i;
+            TableColumn<Row, Object> col = new TableColumn<>(columnNames[i]);
+            col.setCellValueFactory(data -> new SimpleObjectProperty<>(data.getValue().get(idx)));
             table.getColumns().add(col);
         }
-        if (updateMethod != null && idGetter != null && actionLabels.length > 0) {
-            TableColumn<Object,Void> actions = new TableColumn<>("Actions");
-            actions.setPrefWidth(Math.max(170, actionLabels.length * 90));
-            actions.setCellFactory(c -> new TableCell<>() {
-                private final HBox buttons = new HBox(6);
-                { for (int i=0;i<actionLabels.length;i++) {
-                    final int x=i; Button b=createSecondaryButton(actionLabels[i]); b.setPrefHeight(32);
-                    b.setOnAction(e -> updateRow(getTableView().getItems().get(getIndex()), serviceClass,
-                            updateMethod, idGetter, actionValues[x], reloadMethod, reloadArg, host,
-                            actionLabels, actionValues)); buttons.getChildren().add(b);
-                }}
-                protected void updateItem(Void item, boolean empty) { super.updateItem(item, empty); setGraphic(empty ? null : buttons); }
-            });
-            table.getColumns().add(actions);
-        }
-        TextField search = createTextField("Search loaded records...");
-        search.textProperty().addListener((o,a,q) -> {
-            String needle=q == null ? "" : q.toLowerCase();
-            table.getItems().setAll(rows.stream().filter(r -> getters.stream().anyMatch(g ->
-                    readValue(r,g).toLowerCase().contains(needle))).collect(Collectors.toList()));
-        });
-        VBox wrapper = new VBox(12, search, table); wrapper.setFillWidth(true);
-        TableView<Object> holder = table;
-        table.setUserData(wrapper);
-        return holder;
+        return table;
     }
 
-    private void updateRow(Object row, String serviceClass, String updateMethod, String idGetter,
-                           String value, String reloadMethod, Object reloadArg, VBox host,
-                           String[] labels, String[] values) {
+    private Label featureChip(String text) {
+        Label chip = new Label(text);
+        chip.getStyleClass().add("feature-chip");
+        return chip;
+    }
+
+    private TextField styledTextField(String prompt) {
+        TextField field = new TextField();
+        field.setPromptText(prompt);
+        field.getStyleClass().add("modern-field");
+        return field;
+    }
+
+    private Button primaryButton(String text) {
+        Button button = new Button(text);
+        button.getStyleClass().add("primary-button");
+        button.setCursor(Cursor.HAND);
+        return button;
+    }
+
+    private Button secondaryButton(String text) {
+        Button button = new Button(text);
+        button.getStyleClass().add("secondary-button");
+        button.setCursor(Cursor.HAND);
+        return button;
+    }
+
+    private void applyTheme(Scene scene) {
         try {
-            Object id = row.getClass().getMethod(idGetter).invoke(row);
-            runAsync(() -> invokeService(serviceClass, updateMethod, id, value), result -> {
-                showInfo(Boolean.FALSE.equals(result) ? "No record was changed." : "Record updated successfully.");
-                runAsync(() -> reloadArg == null ? invokeService(serviceClass, reloadMethod) : invokeService(serviceClass, reloadMethod, reloadArg), refreshed -> {
-                    while (host.getChildren().size() > 1) host.getChildren().remove(1);
-                    host.getChildren().add(createLiveTable(asList(refreshed), serviceClass, reloadMethod, reloadArg,
-                            labels, values, updateMethod, idGetter, host));
-                });
-            });
-        } catch (Exception ex) { showError(rootMessage(ex)); }
-    }
-
-    private Object invokeService(String className, String methodName, Object... args) throws Exception {
-        Class<?> type = Class.forName(className);
-        Object service = type.getDeclaredConstructor().newInstance();
-        Method selected = null;
-        for (Method m : type.getMethods()) {
-            if (m.getName().equals(methodName) && m.getParameterCount() == args.length && compatible(m.getParameterTypes(), args)) { selected=m; break; }
+            String css = """
+                .root {
+                    -fx-font-family: "Avenir Next", "Segoe UI", Arial;
+                    -fx-font-size: 13px;
+                    -fx-accent: #2f7d4a;
+                    -fx-focus-color: rgba(47,125,74,0.35);
+                    -fx-faint-focus-color: transparent;
+                }
+                .app-background {
+                    -fx-background-color: linear-gradient(to bottom right, #eef7f0 0%, #f8f2e8 52%, #edf5ef 100%);
+                }
+                .dashboard-background { -fx-background-color: #f3f6f2; }
+                .glass-card, .content-card {
+                    -fx-background-color: rgba(255,255,255,0.94);
+                    -fx-background-radius: 24;
+                    -fx-border-color: rgba(255,255,255,0.85);
+                    -fx-border-radius: 24;
+                    -fx-effect: dropshadow(gaussian, rgba(38,72,48,0.16), 30, 0.18, 0, 10);
+                }
+                .content-card { -fx-padding: 18; }
+                .brand-badge, .account-pill, .feature-chip {
+                    -fx-background-color: rgba(47,125,74,0.11);
+                    -fx-text-fill: #286a40;
+                    -fx-background-radius: 999;
+                    -fx-padding: 7 12;
+                    -fx-font-weight: 700;
+                }
+                .brand-title {
+                    -fx-font-size: 44px;
+                    -fx-font-weight: 800;
+                    -fx-text-fill: #183c27;
+                    -fx-line-spacing: -2;
+                }
+                .brand-copy { -fx-font-size: 16px; -fx-text-fill: #557060; -fx-line-spacing: 4; }
+                .form-title { -fx-font-size: 27px; -fx-font-weight: 800; -fx-text-fill: #183c27; }
+                .muted-text { -fx-font-size: 14px; -fx-text-fill: #6c7d72; }
+                .hint-text { -fx-font-size: 11px; -fx-text-fill: #809086; }
+                .modern-field, .text-field, .password-field, .combo-box {
+                    -fx-background-color: #f7faf7;
+                    -fx-border-color: #dce7df;
+                    -fx-border-radius: 12;
+                    -fx-background-radius: 12;
+                    -fx-padding: 11 13;
+                }
+                .modern-field:focused, .text-field:focused, .password-field:focused, .combo-box:focused {
+                    -fx-border-color: #4f9a68;
+                    -fx-background-color: white;
+                }
+                .button { -fx-cursor: hand; -fx-background-radius: 11; -fx-padding: 9 15; -fx-font-weight: 700; }
+                .primary-button {
+                    -fx-background-color: linear-gradient(to right, #2f7d4a, #459760);
+                    -fx-text-fill: white;
+                    -fx-padding: 12 18;
+                }
+                .primary-button:hover { -fx-background-color: #286b40; }
+                .secondary-button { -fx-background-color: #eef4ef; -fx-text-fill: #2f6d43; -fx-border-color: #d5e3d8; -fx-border-radius: 11; }
+                .secondary-button:hover { -fx-background-color: #e3eee5; }
+                .sidebar {
+                    -fx-background-color: linear-gradient(to bottom, #173d28, #225537);
+                    -fx-effect: dropshadow(gaussian, rgba(23,61,40,0.18), 18, 0.1, 4, 0);
+                }
+                .sidebar-logo { -fx-font-size: 27px; -fx-font-weight: 800; -fx-text-fill: white; }
+                .sidebar-role { -fx-font-size: 11px; -fx-font-weight: 700; -fx-text-fill: #b9d3c1; }
+                .nav-button {
+                    -fx-background-color: transparent;
+                    -fx-text-fill: #d9e8de;
+                    -fx-padding: 11 14;
+                }
+                .nav-button:hover { -fx-background-color: rgba(255,255,255,0.08); }
+                .nav-button-selected { -fx-background-color: rgba(255,255,255,0.16); -fx-text-fill: white; }
+                .top-header { -fx-background-color: rgba(255,255,255,0.88); -fx-border-color: transparent transparent #e0e8e2 transparent; }
+                .header-title { -fx-font-size: 21px; -fx-font-weight: 800; -fx-text-fill: #244632; }
+                .table-view {
+                    -fx-background-color: transparent;
+                    -fx-border-color: #e0e8e2;
+                    -fx-border-radius: 14;
+                    -fx-background-radius: 14;
+                }
+                .table-view .column-header-background { -fx-background-color: #eef5ef; -fx-background-radius: 14 14 0 0; }
+                .table-view .column-header { -fx-background-color: transparent; -fx-padding: 10 8; }
+                .table-row-cell { -fx-background-color: white; -fx-border-color: transparent transparent #edf1ee transparent; }
+                .table-row-cell:selected { -fx-background-color: #dfeee3; -fx-text-background-color: #183c27; }
+                .tab-pane .tab-header-area .tab-header-background { -fx-background-color: transparent; }
+                .separator .line { -fx-border-color: #e4ebe6; }
+                .text-area { -fx-background-radius: 12; -fx-border-radius: 12; }
+                """;
+            Path cssFile = Files.createTempFile("farmersin-theme-", ".css");
+            Files.writeString(cssFile, css, StandardCharsets.UTF_8);
+            cssFile.toFile().deleteOnExit();
+            scene.getStylesheets().add(cssFile.toUri().toString());
+        } catch (Exception ignored) {
+            scene.getRoot().setStyle("-fx-font-family: 'Segoe UI'; -fx-background-color: #f3f6f2;");
         }
-        if (selected == null) throw new NoSuchMethodException(className + "." + methodName + " with " + args.length + " parameter(s)");
-        try { return selected.invoke(service, args); }
-        catch (InvocationTargetException ex) { throw ex.getTargetException() instanceof Exception e ? e : ex; }
     }
 
-    private boolean compatible(Class<?>[] types, Object[] args) {
-        for (int i=0;i<types.length;i++) {
-            if (args[i] == null) continue;
-            Class<?> t=types[i];
-            if (t.isPrimitive()) t = t==int.class?Integer.class:t==boolean.class?Boolean.class:t==double.class?Double.class:t==long.class?Long.class:t;
-            if (!t.isAssignableFrom(args[i].getClass())) return false;
+    private void requireLoggedIn() {
+        if (currentUser == null) throw new IllegalStateException("You must be logged in.");
+    }
+
+    private void requireBuyer() throws SQLException {
+        requireLoggedIn();
+        if (currentBuyerProfile == null) {
+            try {
+                currentBuyerProfile = buyerProfileService.getBuyerByUserId(currentUser.getUserId());
+            } catch (Exception ex) {
+                throw new IllegalStateException("No buyer profile yet for this account. "
+                        + "Create one via BuyerProfileService.addBuyerProfile before shopping.");
+            }
         }
-        return true;
     }
 
-    private void runAsync(ThrowingSupplier work, java.util.function.Consumer<Object> success) {
-        Task<Object> task = new Task<>() { protected Object call() throws Exception { return work.get(); } };
-        task.setOnSucceeded(e -> success.accept(task.getValue()));
-        task.setOnFailed(e -> showError(rootMessage(task.getException())));
-        Thread thread = new Thread(task, "farmersin-db-task"); thread.setDaemon(true); thread.start();
+    private void requireSupplier() throws SQLException {
+        requireLoggedIn();
+        if (currentSupplierProfile == null) {
+            currentSupplierProfile = supplierProfileService.getSupplierByUserId(currentUser.getUserId());
+        }
     }
 
-    private List<?> asList(Object value) {
-        if (value == null) return Collections.emptyList();
-        if (value instanceof List<?> list) return list;
-        return List.of(value);
+    /** Simple single-line input dialog. Returns empty if the user cancels. */
+    private Optional<String> textPrompt(String title, String message) {
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle(title);
+        dialog.setHeaderText(null);
+        dialog.setContentText(message);
+        return dialog.showAndWait();
     }
 
-    private String readValue(Object row, Method getter) {
-        try { Object v=getter.invoke(row); return v == null ? "" : String.valueOf(v); }
-        catch (Exception e) { return ""; }
+    /** Multi-field input dialog. Returns empty if the user cancels. */
+    private Optional<String[]> promptFields(String title, String... labels) {
+        Dialog<String[]> dialog = new Dialog<>();
+        dialog.setTitle(title);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(8);
+        grid.setVgap(8);
+        grid.setPadding(new Insets(10));
+        TextField[] fields = new TextField[labels.length];
+        for (int i = 0; i < labels.length; i++) {
+            grid.add(new Label(labels[i]), 0, i);
+            fields[i] = new TextField();
+            grid.add(fields[i], 1, i);
+        }
+        dialog.getDialogPane().setContent(grid);
+
+        dialog.setResultConverter(buttonType -> {
+            if (buttonType == ButtonType.OK) {
+                String[] values = new String[labels.length];
+                for (int i = 0; i < labels.length; i++) values[i] = fields[i].getText().trim();
+                return values;
+            }
+            return null;
+        });
+
+        return Optional.ofNullable(dialog.showAndWait().orElse(null));
     }
 
-    private String humanize(String value) {
-        return value.replaceAll("([a-z])([A-Z])", "$1 $2").replace('_',' ');
-    }
-
-    private Integer positiveInt(String text, String label) {
-        try { int v=Integer.parseInt(text.trim()); if(v<=0) throw new NumberFormatException(); return v; }
-        catch (Exception e) { showError(label + " must be a positive number."); return null; }
-    }
-
-    private String rootMessage(Throwable e) {
-        Throwable x=e; while(x.getCause()!=null) x=x.getCause();
-        return x.getMessage()==null ? x.getClass().getSimpleName() : x.getMessage();
-    }
-
-    private void showError(String message) {
-        Alert alert = new Alert(Alert.AlertType.ERROR); alert.setTitle("FarmersIn Error");
-        alert.setHeaderText("Operation failed"); alert.setContentText(message); alert.showAndWait();
-    }
-
-    @FunctionalInterface
-    private interface ThrowingSupplier { Object get() throws Exception; }
-
-    private void showInfo(String message) {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("FarmersIn");
+    private void info(String message) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION, message, ButtonType.OK);
         alert.setHeaderText(null);
-        alert.setContentText(message);
         alert.showAndWait();
     }
 
-    // =========================================================
-    // SIMPLE DATA CLASSES FOR TABLES
-    // =========================================================
-
-    public static class SupplierRow {
-        private final javafx.beans.property.SimpleStringProperty name;
-        private final javafx.beans.property.SimpleStringProperty business;
-        private final javafx.beans.property.SimpleStringProperty city;
-        private final javafx.beans.property.SimpleStringProperty status;
-
-        public SupplierRow(String name, String business, String city, String status) {
-            this.name = new javafx.beans.property.SimpleStringProperty(name);
-            this.business = new javafx.beans.property.SimpleStringProperty(business);
-            this.city = new javafx.beans.property.SimpleStringProperty(city);
-            this.status = new javafx.beans.property.SimpleStringProperty(status);
-        }
-
-        public javafx.beans.property.StringProperty nameProperty() {
-            return name;
-        }
-
-        public javafx.beans.property.StringProperty businessProperty() {
-            return business;
-        }
-
-        public javafx.beans.property.StringProperty cityProperty() {
-            return city;
-        }
-
-        public javafx.beans.property.StringProperty statusProperty() {
-            return status;
-        }
-    }
-
-    public static class OrderRow {
-        private final javafx.beans.property.SimpleStringProperty id;
-        private final javafx.beans.property.SimpleStringProperty buyer;
-        private final javafx.beans.property.SimpleStringProperty amount;
-        private final javafx.beans.property.SimpleStringProperty date;
-        private final javafx.beans.property.SimpleStringProperty status;
-
-        public OrderRow(String id, String buyer, String amount,
-                        String date, String status) {
-            this.id = new javafx.beans.property.SimpleStringProperty(id);
-            this.buyer = new javafx.beans.property.SimpleStringProperty(buyer);
-            this.amount = new javafx.beans.property.SimpleStringProperty(amount);
-            this.date = new javafx.beans.property.SimpleStringProperty(date);
-            this.status = new javafx.beans.property.SimpleStringProperty(status);
-        }
-
-        public javafx.beans.property.StringProperty idProperty() {
-            return id;
-        }
-
-        public javafx.beans.property.StringProperty buyerProperty() {
-            return buyer;
-        }
-
-        public javafx.beans.property.StringProperty amountProperty() {
-            return amount;
-        }
-
-        public javafx.beans.property.StringProperty dateProperty() {
-            return date;
-        }
-
-        public javafx.beans.property.StringProperty statusProperty() {
-            return status;
-        }
-    }
-
-    public static class UserRow {
-        private final javafx.beans.property.SimpleStringProperty name;
-        private final javafx.beans.property.SimpleStringProperty email;
-        private final javafx.beans.property.SimpleStringProperty role;
-        private final javafx.beans.property.SimpleStringProperty status;
-
-        public UserRow(String name, String email, String role, String status) {
-            this.name = new javafx.beans.property.SimpleStringProperty(name);
-            this.email = new javafx.beans.property.SimpleStringProperty(email);
-            this.role = new javafx.beans.property.SimpleStringProperty(role);
-            this.status = new javafx.beans.property.SimpleStringProperty(status);
-        }
-
-        public javafx.beans.property.StringProperty nameProperty() {
-            return name;
-        }
-
-        public javafx.beans.property.StringProperty emailProperty() {
-            return email;
-        }
-
-        public javafx.beans.property.StringProperty roleProperty() {
-            return role;
-        }
-
-        public javafx.beans.property.StringProperty statusProperty() {
-            return status;
-        }
-    }
-
-    public static class LogRow {
-        private final javafx.beans.property.SimpleStringProperty date;
-        private final javafx.beans.property.SimpleStringProperty action;
-        private final javafx.beans.property.SimpleStringProperty entity;
-        private final javafx.beans.property.SimpleStringProperty details;
-
-        public LogRow(String date, String action, String entity, String details) {
-            this.date = new javafx.beans.property.SimpleStringProperty(date);
-            this.action = new javafx.beans.property.SimpleStringProperty(action);
-            this.entity = new javafx.beans.property.SimpleStringProperty(entity);
-            this.details = new javafx.beans.property.SimpleStringProperty(details);
-        }
-
-        public javafx.beans.property.StringProperty dateProperty() {
-            return date;
-        }
-
-        public javafx.beans.property.StringProperty actionProperty() {
-            return action;
-        }
-
-        public javafx.beans.property.StringProperty entityProperty() {
-            return entity;
-        }
-
-        public javafx.beans.property.StringProperty detailsProperty() {
-            return details;
-        }
-    }
-
-    private record SimpleCardData(
-            String first,
-            String second,
-            String status,
-            String description
-    ) {
-    }
-
-    public static void main(String[] args) {
-        launch(args);
+    private void showError(Exception ex) {
+        Alert alert = new Alert(Alert.AlertType.ERROR, ex.getMessage() == null ? ex.toString() : ex.getMessage(), ButtonType.OK);
+        alert.setHeaderText("Error");
+        alert.showAndWait();
     }
 }
