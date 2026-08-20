@@ -36,7 +36,7 @@ import java.util.function.Supplier;
  *
  * IMPORTANT:
  *  - This class intentionally does not import any model/dao/service classes.
- *  - It discovers your existing services/models at runtime using reflection.
+ *  - It discovers your existing services/DAOs/models at runtime using reflection.
  *  - Therefore you can place only this file in your project without editing backend files.
  *
  * Visual identity: warm beige backgrounds, dark-soil brown for structure and
@@ -282,7 +282,7 @@ public class frontend {
             openShell();
             return;
         }
-        String svc = role.equals("BUYER") ? "buyerprofile" : "SupplierProfileService";
+        String svc = role.equals("BUYER") ? "buyerprofile" : "supplier_profiles";
         String method = role.equals("BUYER") ? "getBuyerByUserId" : "getSupplierByUserId";
         runAsync(() -> invoke(svc, method, currentUserId), result -> {
             currentProfileId = extractInt(result, role.equals("BUYER") ? "getBuyerId" : "getSupplierId");
@@ -430,7 +430,7 @@ public class frontend {
                 statCard("Portal", pretty(role), "Active workspace"),
                 statCard("User", currentUserId == null ? "—" : "#" + currentUserId, "Signed-in record"),
                 statCard("Profile", currentProfileId == null ? "—" : "#" + currentProfileId, role + " profile"),
-                statCard("Backend", "Connected", "Service layer enabled")
+                statCard("Backend", "Connected", "Backend layer enabled")
         );
 
         VBox welcome = panel("Welcome to FarmersIn", roleMessage());
@@ -482,7 +482,7 @@ public class frontend {
         actions.setAlignment(Pos.CENTER_LEFT);
 
         Runnable load = () -> loadInto(table, state,
-                buyer ? "buyerprofile" : "SupplierProfileService",
+                buyer ? "buyerprofile" : "supplier_profiles",
                 "getPendingVerifications");
         refresh.setOnAction(e -> load.run());
         approve.setOnAction(e -> updateApproval(table, buyer, "APPROVED", load));
@@ -499,7 +499,7 @@ public class frontend {
         String getter = buyer ? "getBuyerId" : "getSupplierId";
         Integer id = extractInt(row, getter);
         if (id == null) { alert("Cannot identify request", "The selected record does not expose " + getter + "()."); return; }
-        String service = buyer ? "buyerprofile" : "SupplierProfileService";
+        String service = buyer ? "buyerprofile" : "supplier_profiles";
         runAsync(() -> invoke(service, "updateVerificationStatus", id, status), x -> {
             toast(status.equals("APPROVED") ? "Request approved" : "Request rejected", false);
             reload.run();
@@ -561,7 +561,7 @@ public class frontend {
         products.getSelectionModel().selectedItemProperty().addListener((o, old, row) -> {
             if (row == null) return;
             Integer id = firstInt(row, "getProductId", "getId");
-            if (id != null) loadInto(listings, listingState, "SupplierProductService", "getApprovedByProductId", id);
+            if (id != null) loadInto(listings, listingState, "supplier_products", "getApprovedByProductId", id);
         });
         SplitPane split = new SplitPane(wrappedTable("Products", products, productState), wrappedTable("Approved Supplier Offers", listings, listingState));
         split.setDividerPositions(.44);
@@ -592,17 +592,17 @@ public class frontend {
         VBox root = new VBox(12);
         TableView<Object> table = dataTable();
         Label state = new Label();
-        Runnable reload = () -> loadInto(table, state, "SupplierProductService", "getListingsBySupplierId", currentProfileId);
+        Runnable reload = () -> loadInto(table, state, "supplier_products", "getListingsBySupplierId", currentProfileId);
         HBox actions = new HBox(10);
         Button refresh = secondaryButton("Refresh"); refresh.setOnAction(e -> reload.run());
         Button add = primaryButton("New Listing"); add.setOnAction(e -> modelEditor("SupplierProduct", null, obj -> {
             setIfPossible(obj, "setSupplierId", currentProfileId);
-            invokeAndReload("SupplierProductService", "addSupplierProduct", obj, reload);
+            invokeAndReload("supplier_products", "addSupplierProduct", obj, reload);
         }));
         Button edit = secondaryButton("Edit Selected"); edit.setOnAction(e -> {
             Object row = table.getSelectionModel().getSelectedItem();
             if (row == null) { alert("Select a listing", "Choose a supplier listing first."); return; }
-            modelEditor("SupplierProduct", row, obj -> invokeAndReload("SupplierProductService", "updateSupplierProduct", obj, reload));
+            modelEditor("SupplierProduct", row, obj -> invokeAndReload("supplier_products", "updateSupplierProduct", obj, reload));
         });
         actions.getChildren().addAll(refresh, add, edit);
         root.getChildren().addAll(actions, state, table); VBox.setVgrow(table, Priority.ALWAYS);
@@ -961,10 +961,19 @@ public class frontend {
     private Class<?> findServiceClass(String simple) throws ClassNotFoundException {
         List<String> names = new ArrayList<>();
         if(simple.contains(".")) names.add(simple);
-        names.add("services."+simple);
-        names.add("service."+simple); // supports the two backend classes currently declared in package service
-        for(String n:names) try{return Class.forName(n);}catch(ClassNotFoundException ignored){}
-        throw new ClassNotFoundException("Service class not found: "+simple+" (checked services.* and service.*)");
+        names.add("services." + simple);
+        names.add("service." + simple);
+        names.add("dao." + simple); // updated DAO classes such as supplier_profiles / supplier_products
+        for (String n : names) {
+            try {
+                return Class.forName(n);
+            } catch (ClassNotFoundException ignored) {
+            }
+        }
+        throw new ClassNotFoundException(
+                "Backend class not found: " + simple +
+                        " (checked services.*, service.* and dao.*)"
+        );
     }
 
     private Method findCompatibleMethod(Class<?> cls,String name,Object[] args){
