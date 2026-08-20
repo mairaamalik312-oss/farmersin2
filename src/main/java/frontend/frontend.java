@@ -36,7 +36,7 @@ import java.util.function.Supplier;
  *
  * IMPORTANT:
  *  - This class intentionally does not import any model/dao/service classes.
- *  - It discovers your existing services/DAOs/models at runtime using reflection.
+ *  - It discovers your existing services/models at runtime using reflection.
  *  - Therefore you can place only this file in your project without editing backend files.
  *
  * Visual identity: warm beige backgrounds, dark-soil brown for structure and
@@ -430,7 +430,7 @@ public class frontend {
                 statCard("Portal", pretty(role), "Active workspace"),
                 statCard("User", currentUserId == null ? "—" : "#" + currentUserId, "Signed-in record"),
                 statCard("Profile", currentProfileId == null ? "—" : "#" + currentProfileId, role + " profile"),
-                statCard("Backend", "Connected", "Backend layer enabled")
+                statCard("Backend", "Connected", "Service layer enabled")
         );
 
         VBox welcome = panel("Welcome to FarmersIn", roleMessage());
@@ -1103,19 +1103,11 @@ public class frontend {
     private Class<?> findServiceClass(String simple) throws ClassNotFoundException {
         List<String> names = new ArrayList<>();
         if(simple.contains(".")) names.add(simple);
-        names.add("services." + simple);
-        names.add("service." + simple);
-        names.add("dao." + simple); // updated DAO classes such as supplier_profiles / supplier_products
-        for (String n : names) {
-            try {
-                return Class.forName(n);
-            } catch (ClassNotFoundException ignored) {
-            }
-        }
-        throw new ClassNotFoundException(
-                "Backend class not found: " + simple +
-                        " (checked services.*, service.* and dao.*)"
-        );
+        names.add("services."+simple);
+        names.add("service."+simple); // supports service classes declared in package service
+        names.add("dao."+simple);     // supports DAO classes declared in package dao (e.g. supplier_profiles, supplier_products)
+        for(String n:names) try{return Class.forName(n);}catch(ClassNotFoundException ignored){}
+        throw new ClassNotFoundException("Service/DAO class not found: "+simple+" (checked services.*, service.*, and dao.*)");
     }
 
     private Method findCompatibleMethod(Class<?> cls,String name,Object[] args){
