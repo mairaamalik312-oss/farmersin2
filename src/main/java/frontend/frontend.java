@@ -1,3 +1,5 @@
+package frontend;
+
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyObjectWrapper;
