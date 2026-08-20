@@ -1,5 +1,3 @@
-package frontend;
-
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyObjectWrapper;
@@ -11,11 +9,15 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.effect.DropShadow;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
+import javafx.scene.text.FontPosture;
 import javafx.scene.text.FontWeight;
+import javafx.geometry.Rectangle2D;
+import javafx.stage.Screen;
 import javafx.stage.Stage;
 
 import java.lang.reflect.*;
@@ -35,10 +37,14 @@ import java.util.function.Supplier;
  *  - It discovers your existing services/models at runtime using reflection.
  *  - Therefore you can place only this file in your project without editing backend files.
  *
+ * Visual identity: warm beige backgrounds, dark-soil brown for structure and
+ * primary actions, light wheat-tan for accents, and near-black text throughout
+ * for strong readability.
+ *
  * Place at: src/main/java/frontend/FarmersInFrontend.java
  * Run: frontend.FarmersInFrontend
  */
-public class FarmersInFrontend {
+public class frontend {
 
     private Stage stage;
     private BorderPane shell;
@@ -55,20 +61,46 @@ public class FarmersInFrontend {
     private String currentUserName = "";
     private String currentUserEmail = "";
 
-    private static final String BG = "#F4F7F3";
-    private static final String CARD = "#FFFFFF";
-    private static final String GREEN = "#1F7A4D";
-    private static final String DARK = "#17372B";
-    private static final String MUTED = "#6B7D74";
-    private static final String BORDER = "#DCE7E0";
-    private static final String DANGER = "#B42318";
-    private static final String WARNING = "#B54708";
+    // ---------------------------------------------------------------------
+    // PALETTE — beige / dark brown / light brown, near-black text
+    // ---------------------------------------------------------------------
+    private static final String BG        = "#ECE0C8"; // warm beige page background
+    private static final String CARD      = "#F8F1E1"; // pale cream card surface
+    private static final String SOIL_DARK = "#3B2A1E"; // deep dark brown (sidebar, primary)
+    private static final String BARK      = "#5B4028"; // mid dark brown (hover / secondary emphasis)
+    private static final String WHEAT     = "#C9A876"; // light brown / tan accent
+    private static final String WHEAT_SOFT= "#E3CFA8"; // pale tan (sidebar text, chips)
+    private static final String INK       = "#1C140D"; // near-black text
+    private static final String MUTED     = "#6E5B45"; // muted warm brown for secondary text
+    private static final String BORDER    = "#D9C6A3"; // soft tan border
+    private static final String DANGER_BG = "#F2DED2"; // soft terracotta chip background
+    private static final String DANGER_FG = "#8B3A2B"; // brick red text/icon
+    private static final String WARNING   = "#8A5A22"; // amber brown
+
+    // legacy aliases kept so every original call-site below still compiles unchanged
+    private static final String GREEN  = SOIL_DARK;
+    private static final String DARK   = INK;
+    private static final String DANGER = DANGER_FG;
+
+    /**
+     * Clamps a requested [width, height] to the visible screen bounds
+     * (leaving a small margin) so the window never opens partly off-screen
+     * on smaller displays. Returns {width, height}.
+     */
+    private double[] fitToScreen(double preferredW, double preferredH) {
+        Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
+        double maxW = bounds.getWidth() - 40;
+        double maxH = bounds.getHeight() - 40;
+        double w = Math.min(preferredW, maxW);
+        double h = Math.min(preferredH, maxH);
+        return new double[]{w, h};
+    }
 
     private void startUi(Stage primaryStage) {
         this.stage = primaryStage;
         stage.setTitle("FarmersIn • Farm to Business Marketplace");
-        stage.setMinWidth(1080);
-        stage.setMinHeight(700);
+        stage.setMinWidth(920);
+        stage.setMinHeight(640);
         showWelcome();
         stage.show();
     }
@@ -83,22 +115,40 @@ public class FarmersInFrontend {
         root.setPadding(new Insets(42));
         root.setStyle("-fx-background-color:" + BG + ";");
 
+        HBox brandRow = new HBox(10);
+        brandRow.setAlignment(Pos.CENTER);
+        Label leaf = new Label("\uD83C\uDF3E"); // sheaf of rice / wheat glyph
+        leaf.setFont(Font.font(30));
         Label brand = new Label("FarmersIn");
-        brand.setFont(Font.font("System", FontWeight.EXTRA_BOLD, 38));
-        brand.setTextFill(Color.web(DARK));
+        brand.setFont(Font.font("Georgia", FontWeight.EXTRA_BOLD, 40));
+        brand.setTextFill(Color.web(SOIL_DARK));
+        brandRow.getChildren().addAll(leaf, brand);
 
-        Label slogan = new Label("Fresh supply. Fair trade. Better business.");
-        slogan.setFont(Font.font(16));
+        Label slogan = new Label("◆   Fresh supply. Fair trade. Better business.   ◆");
+        slogan.setFont(Font.font("System", FontPosture.ITALIC, 15));
         slogan.setTextFill(Color.web(MUTED));
 
         VBox card = new VBox(16);
         card.setMaxWidth(590);
-        card.setPadding(new Insets(30));
+        card.setPadding(new Insets(32, 30, 30, 30));
         card.setStyle(cardStyle());
+        card.setEffect(softShadow());
+
+        // decorative "stitched furrow" accent strip — signature touch
+        HBox furrow = new HBox();
+        furrow.setPrefHeight(6);
+        furrow.setMaxWidth(Double.MAX_VALUE);
+        for (int i = 0; i < 18; i++) {
+            Region seg = new Region();
+            seg.setPrefWidth(1000.0 / 18);
+            seg.setPrefHeight(6);
+            seg.setStyle("-fx-background-color:" + (i % 2 == 0 ? SOIL_DARK : WHEAT) + ";");
+            furrow.getChildren().add(seg);
+        }
 
         Label heading = new Label("Sign in to FarmersIn");
-        heading.setFont(Font.font("System", FontWeight.BOLD, 24));
-        heading.setTextFill(Color.web(DARK));
+        heading.setFont(Font.font("Georgia", FontWeight.BOLD, 24));
+        heading.setTextFill(Color.web(SOIL_DARK));
 
         Label help = new Label("Enter your account email and password, then choose the correct portal.");
         help.setWrapText(true);
@@ -212,13 +262,15 @@ public class FarmersInFrontend {
         note.setStyle("-fx-font-size: 12px;");
 
         card.getChildren().addAll(
-                heading, help, roleBox,
+                furrow, heading, help, roleBox,
                 labeled("Email", emailField),
                 labeled("Password", passwordField),
                 loginState, enter, note
         );
-        root.getChildren().addAll(brand, slogan, card);
-        stage.setScene(new Scene(root, 1180, 760));
+        root.getChildren().addAll(brandRow, slogan, card);
+        double[] size = fitToScreen(1180, 760);
+        stage.setScene(new Scene(root, size[0], size[1]));
+        stage.centerOnScreen();
         Platform.runLater(emailField::requestFocus);
     }
 
@@ -257,7 +309,8 @@ public class FarmersInFrontend {
         toast.setVisible(false);
         toast.setManaged(false);
 
-        Scene scene = new Scene(shell, 1400, 860);
+        double[] size = fitToScreen(1400, 860);
+        Scene scene = new Scene(shell, size[0], size[1]);
         stage.setScene(scene);
         stage.centerOnScreen();
         showDashboard();
@@ -267,16 +320,22 @@ public class FarmersInFrontend {
         sidebar = new VBox(8);
         sidebar.setPrefWidth(245);
         sidebar.setPadding(new Insets(24, 15, 20, 15));
-        sidebar.setStyle("-fx-background-color:" + DARK + ";");
+        sidebar.setStyle("-fx-background-color:" + SOIL_DARK + ";");
 
+        HBox logoRow = new HBox(8);
+        logoRow.setAlignment(Pos.CENTER_LEFT);
+        Label leaf = new Label("\uD83C\uDF3E");
+        leaf.setFont(Font.font(18));
         Label logo = new Label("FarmersIn");
-        logo.setFont(Font.font("System", FontWeight.EXTRA_BOLD, 25));
-        logo.setTextFill(Color.WHITE);
+        logo.setFont(Font.font("Georgia", FontWeight.EXTRA_BOLD, 24));
+        logo.setTextFill(Color.web(WHEAT_SOFT));
+        logoRow.getChildren().addAll(leaf, logo);
+
         Label portal = new Label(pretty(role) + " Portal");
-        portal.setTextFill(Color.web("#B8CEC2"));
-        portal.setStyle("-fx-font-size: 12px;");
-        VBox brand = new VBox(2, logo, portal);
-        brand.setPadding(new Insets(0, 10, 20, 10));
+        portal.setTextFill(Color.web(WHEAT));
+        portal.setStyle("-fx-font-size: 12px; -fx-font-weight:bold;");
+        VBox brand = new VBox(4, logoRow, portal);
+        brand.setPadding(new Insets(0, 10, 20, 6));
         sidebar.getChildren().add(brand);
 
         navButtons.clear();
@@ -309,7 +368,7 @@ public class FarmersInFrontend {
         VBox.setVgrow(spacer, Priority.ALWAYS);
         Button switchBtn = new Button("↩ Switch Portal");
         switchBtn.setMaxWidth(Double.MAX_VALUE);
-        switchBtn.setStyle("-fx-background-color: transparent; -fx-text-fill:#D9E7DF; -fx-alignment:CENTER-LEFT; -fx-padding:12; -fx-cursor:hand;");
+        switchBtn.setStyle("-fx-background-color: transparent; -fx-text-fill:" + WHEAT_SOFT + "; -fx-alignment:CENTER-LEFT; -fx-padding:12; -fx-cursor:hand; -fx-font-weight:bold;");
         switchBtn.setOnAction(e -> showWelcome());
         sidebar.getChildren().addAll(spacer, switchBtn);
         return sidebar;
@@ -319,12 +378,12 @@ public class FarmersInFrontend {
         HBox top = new HBox(16);
         top.setAlignment(Pos.CENTER_LEFT);
         top.setPadding(new Insets(17, 26, 17, 26));
-        top.setStyle("-fx-background-color:white; -fx-border-color:transparent transparent " + BORDER + " transparent;");
+        top.setStyle("-fx-background-color:" + CARD + "; -fx-border-color:transparent transparent " + BORDER + " transparent;");
 
         VBox titles = new VBox(2);
         pageTitle = new Label("Dashboard");
-        pageTitle.setFont(Font.font("System", FontWeight.BOLD, 22));
-        pageTitle.setTextFill(Color.web(DARK));
+        pageTitle.setFont(Font.font("Georgia", FontWeight.BOLD, 22));
+        pageTitle.setTextFill(Color.web(INK));
         pageSubtitle = new Label("Marketplace overview");
         pageSubtitle.setTextFill(Color.web(MUTED));
         titles.getChildren().addAll(pageTitle, pageSubtitle);
@@ -336,7 +395,7 @@ public class FarmersInFrontend {
                 ? role
                 : currentUserName + "  •  " + pretty(role);
         Label identity = new Label(displayIdentity);
-        identity.setStyle("-fx-background-color:#EEF5F1; -fx-text-fill:" + DARK + "; -fx-padding:8 12; -fx-background-radius:20; -fx-font-weight:bold;");
+        identity.setStyle("-fx-background-color:" + WHEAT_SOFT + "; -fx-text-fill:" + INK + "; -fx-padding:8 14; -fx-background-radius:20; -fx-font-weight:bold; -fx-border-color:" + WHEAT + "; -fx-border-radius:20;");
         top.getChildren().addAll(titles, spacer, identity);
         return top;
     }
@@ -774,8 +833,11 @@ public class FarmersInFrontend {
     private TableView<Object> dataTable() {
         TableView<Object> t = new TableView<>();
         t.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        t.setPlaceholder(new Label("No data to display"));
-        t.setStyle("-fx-background-color:white; -fx-border-color:" + BORDER + "; -fx-border-radius:10; -fx-background-radius:10;");
+        Label placeholder = new Label("No data to display");
+        placeholder.setTextFill(Color.web(MUTED));
+        placeholder.setStyle("-fx-font-style:italic;");
+        t.setPlaceholder(placeholder);
+        t.setStyle("-fx-background-color:" + CARD + "; -fx-border-color:" + BORDER + "; -fx-border-radius:10; -fx-background-radius:10; -fx-table-header-border-color: transparent;");
         t.setRowFactory(tv -> {
             TableRow<Object> row = new TableRow<>();
             row.setOnMouseClicked(e -> { if(e.getButton()==MouseButton.PRIMARY && e.getClickCount()==2 && !row.isEmpty()) showObjectDetails(row.getItem()); });
@@ -789,12 +851,13 @@ public class FarmersInFrontend {
         GridPane grid = new GridPane(); grid.setHgap(14); grid.setVgap(10); grid.setPadding(new Insets(15));
         int r=0;
         for(Method m: readableGettersAll(obj.getClass())) {
-            Label k=new Label(pretty(propertyName(m))); k.setStyle("-fx-font-weight:bold;");
-            Label v=new Label(String.valueOf(safeGetter(obj,m))); v.setWrapText(true); v.setMaxWidth(450);
+            Label k=new Label(pretty(propertyName(m))); k.setStyle("-fx-font-weight:bold; -fx-text-fill:" + INK + ";");
+            Label v=new Label(String.valueOf(safeGetter(obj,m))); v.setWrapText(true); v.setMaxWidth(450); v.setTextFill(Color.web(INK));
             grid.add(k,0,r); grid.add(v,1,r++);
         }
         ScrollPane sp=new ScrollPane(grid); sp.setFitToWidth(true); sp.setPrefViewportHeight(500); sp.setPrefViewportWidth(650);
-        d.getDialogPane().setContent(sp); d.showAndWait();
+        d.getDialogPane().setContent(sp); d.getDialogPane().setStyle("-fx-background-color:" + CARD + ";");
+        d.showAndWait();
     }
 
     private List<Method> readableGettersAll(Class<?> c) {
@@ -809,6 +872,7 @@ public class FarmersInFrontend {
             Object obj = existing != null ? existing : cls.getDeclaredConstructor().newInstance();
             Dialog<ButtonType> dialog = new Dialog<>(); dialog.setTitle((existing==null?"Add ":"Edit ")+pretty(simpleModelName));
             ButtonType save = new ButtonType("Save", ButtonBar.ButtonData.OK_DONE); dialog.getDialogPane().getButtonTypes().addAll(save, ButtonType.CANCEL);
+            dialog.getDialogPane().setStyle("-fx-background-color:" + CARD + ";");
             GridPane grid = new GridPane(); grid.setHgap(12); grid.setVgap(10); grid.setPadding(new Insets(16));
             Map<Method,Control> fields = new LinkedHashMap<>(); int row=0;
             for(Method setter: editableSetters(cls)) {
@@ -817,7 +881,8 @@ public class FarmersInFrontend {
                 Object current=getter==null?null:safeInvokeGetter(obj,getter);
                 Class<?> type=setter.getParameterTypes()[0];
                 Control field=createEditor(type,current);
-                grid.add(new Label(pretty(prop)),0,row); grid.add(field,1,row++); fields.put(setter,field);
+                Label lbl = new Label(pretty(prop)); lbl.setTextFill(Color.web(INK));
+                grid.add(lbl,0,row); grid.add(field,1,row++); fields.put(setter,field);
             }
             ScrollPane sp=new ScrollPane(grid); sp.setFitToWidth(true); sp.setPrefViewportWidth(560); sp.setPrefViewportHeight(560); dialog.getDialogPane().setContent(sp);
             dialog.showAndWait().filter(b->b==save).ifPresent(b->{
@@ -983,37 +1048,52 @@ public class FarmersInFrontend {
         return message;
     }
 
-    private Node wrappedTable(String title,TableView<Object> table,Label state){VBox v=new VBox(8);Label h=new Label(title);h.setStyle("-fx-font-weight:bold;-fx-font-size:15px;");v.getChildren().addAll(h,state,table);VBox.setVgrow(table,Priority.ALWAYS);v.setPadding(new Insets(10));return v;}
+    private Node wrappedTable(String title,TableView<Object> table,Label state){VBox v=new VBox(8);Label h=new Label(title);h.setStyle("-fx-font-weight:bold;-fx-font-size:15px;-fx-text-fill:"+INK+";");v.getChildren().addAll(h,state,table);VBox.setVgrow(table,Priority.ALWAYS);v.setPadding(new Insets(10));return v;}
 
     private Node statCard(String title,String value,String note){
-        VBox v=new VBox(5);v.setPrefWidth(235);v.setPadding(new Insets(18));v.setStyle(cardStyle());
+        VBox v=new VBox(5);v.setPrefWidth(235);v.setPadding(new Insets(18));v.setStyle(cardStyle());v.setEffect(softShadow());
+        Region accent = new Region(); accent.setPrefHeight(4); accent.setMaxWidth(Double.MAX_VALUE);
+        accent.setStyle("-fx-background-color:" + WHEAT + "; -fx-background-radius:3;");
         Label t=new Label(title.toUpperCase());t.setTextFill(Color.web(MUTED));t.setStyle("-fx-font-size:11px;-fx-font-weight:bold;");
-        Label val=new Label(value);val.setFont(Font.font("System",FontWeight.BOLD,24));val.setTextFill(Color.web(DARK));
-        Label n=new Label(note);n.setTextFill(Color.web(MUTED));n.setStyle("-fx-font-size:12px;");v.getChildren().addAll(t,val,n);return v;
+        Label val=new Label(value);val.setFont(Font.font("Georgia",FontWeight.BOLD,24));val.setTextFill(Color.web(INK));
+        Label n=new Label(note);n.setTextFill(Color.web(MUTED));n.setStyle("-fx-font-size:12px;");
+        v.getChildren().addAll(accent,t,val,n);return v;
     }
-    private VBox panel(String title,String text){VBox v=new VBox(8);v.setPadding(new Insets(22));v.setStyle(cardStyle());Label h=new Label(title);h.setFont(Font.font("System",FontWeight.BOLD,18));h.setTextFill(Color.web(DARK));Label b=new Label(text);b.setWrapText(true);b.setTextFill(Color.web(MUTED));v.getChildren().addAll(h,b);return v;}
-    private Node actionCard(String title,String text,Runnable action){VBox v=panel(title,text);v.setMinWidth(250);v.setOnMouseClicked(e->action.run());v.setStyle(cardStyle()+"-fx-cursor:hand;");return v;}
-    private Node labeled(String title,Node field){VBox v=new VBox(6,new Label(title),field);return v;}
+    private VBox panel(String title,String text){VBox v=new VBox(8);v.setPadding(new Insets(22));v.setStyle(cardStyle());v.setEffect(softShadow());Label h=new Label(title);h.setFont(Font.font("Georgia",FontWeight.BOLD,18));h.setTextFill(Color.web(INK));Label b=new Label(text);b.setWrapText(true);b.setTextFill(Color.web(MUTED));v.getChildren().addAll(h,b);return v;}
+    private Node actionCard(String title,String text,Runnable action){VBox v=panel(title,text);v.setMinWidth(250);v.setOnMouseClicked(e->action.run());v.setStyle(cardStyle()+"-fx-cursor:hand;-fx-border-color:"+WHEAT+";-fx-border-width:1.4;");return v;}
+    private Node labeled(String title,Node field){Label l=new Label(title);l.setTextFill(Color.web(INK));l.setStyle("-fx-font-weight:bold;");VBox v=new VBox(6,l,field);return v;}
 
     private void show(Node node){content.getChildren().setAll(node);}
     private void setHeader(String title,String subtitle){pageTitle.setText(title);pageSubtitle.setText(subtitle);}
     private void showMissingProfile(String kind){show(panel(kind+" profile not resolved","Enter the portal again with a valid User ID that has an existing "+kind.toLowerCase()+" profile."));}
 
-    private Button primaryButton(String text){Button b=new Button(text);b.setStyle("-fx-background-color:"+GREEN+";-fx-text-fill:white;-fx-font-weight:bold;-fx-padding:10 16;-fx-background-radius:8;-fx-cursor:hand;");return b;}
-    private Button secondaryButton(String text){Button b=new Button(text);b.setStyle("-fx-background-color:white;-fx-text-fill:"+DARK+";-fx-font-weight:bold;-fx-padding:9 15;-fx-background-radius:8;-fx-border-radius:8;-fx-border-color:"+BORDER+";-fx-cursor:hand;");return b;}
-    private Button dangerButton(String text){Button b=new Button(text);b.setStyle("-fx-background-color:#FFF1F0;-fx-text-fill:"+DANGER+";-fx-font-weight:bold;-fx-padding:9 15;-fx-background-radius:8;-fx-cursor:hand;");return b;}
-    private void styleInput(TextInputControl f){f.setStyle("-fx-background-color:white;-fx-border-color:"+BORDER+";-fx-border-radius:8;-fx-background-radius:8;-fx-padding:9 11;");}
-    private void styleRoleToggle(ToggleButton b){b.setStyle("-fx-background-color:#EEF5F1;-fx-text-fill:"+DARK+";-fx-background-radius:8;-fx-padding:10 14;-fx-cursor:hand;");b.selectedProperty().addListener((o,a,s)->b.setStyle(s?"-fx-background-color:"+GREEN+";-fx-text-fill:white;-fx-font-weight:bold;-fx-background-radius:8;-fx-padding:10 14;":"-fx-background-color:#EEF5F1;-fx-text-fill:"+DARK+";-fx-background-radius:8;-fx-padding:10 14;"));}
-    private String navStyle(boolean active){return active?"-fx-background-color:#2E8B5E;-fx-text-fill:white;-fx-font-weight:bold;-fx-background-radius:8;-fx-padding:10 13;-fx-cursor:hand;":"-fx-background-color:transparent;-fx-text-fill:#D9E7DF;-fx-background-radius:8;-fx-padding:10 13;-fx-cursor:hand;";}
-    private String cardStyle(){return "-fx-background-color:"+CARD+";-fx-background-radius:12;-fx-border-radius:12;-fx-border-color:"+BORDER+";";}
+    private Button primaryButton(String text){Button b=new Button(text);b.setStyle("-fx-background-color:"+SOIL_DARK+";-fx-text-fill:"+WHEAT_SOFT+";-fx-font-weight:bold;-fx-padding:10 16;-fx-background-radius:8;-fx-cursor:hand;");
+        b.setOnMouseEntered(e->b.setStyle("-fx-background-color:"+BARK+";-fx-text-fill:"+WHEAT_SOFT+";-fx-font-weight:bold;-fx-padding:10 16;-fx-background-radius:8;-fx-cursor:hand;"));
+        b.setOnMouseExited(e->b.setStyle("-fx-background-color:"+SOIL_DARK+";-fx-text-fill:"+WHEAT_SOFT+";-fx-font-weight:bold;-fx-padding:10 16;-fx-background-radius:8;-fx-cursor:hand;"));
+        return b;}
+    private Button secondaryButton(String text){Button b=new Button(text);b.setStyle("-fx-background-color:"+CARD+";-fx-text-fill:"+INK+";-fx-font-weight:bold;-fx-padding:9 15;-fx-background-radius:8;-fx-border-radius:8;-fx-border-color:"+BORDER+";-fx-cursor:hand;");
+        b.setOnMouseEntered(e->b.setStyle("-fx-background-color:"+WHEAT_SOFT+";-fx-text-fill:"+INK+";-fx-font-weight:bold;-fx-padding:9 15;-fx-background-radius:8;-fx-border-radius:8;-fx-border-color:"+WHEAT+";-fx-cursor:hand;"));
+        b.setOnMouseExited(e->b.setStyle("-fx-background-color:"+CARD+";-fx-text-fill:"+INK+";-fx-font-weight:bold;-fx-padding:9 15;-fx-background-radius:8;-fx-border-radius:8;-fx-border-color:"+BORDER+";-fx-cursor:hand;"));
+        return b;}
+    private Button dangerButton(String text){Button b=new Button(text);b.setStyle("-fx-background-color:"+DANGER_BG+";-fx-text-fill:"+DANGER_FG+";-fx-font-weight:bold;-fx-padding:9 15;-fx-background-radius:8;-fx-cursor:hand;");return b;}
+    private void styleInput(TextInputControl f){f.setStyle("-fx-background-color:"+CARD+";-fx-text-fill:"+INK+";-fx-border-color:"+BORDER+";-fx-border-radius:8;-fx-background-radius:8;-fx-padding:9 11;");}
+    private void styleRoleToggle(ToggleButton b){
+        String off="-fx-background-color:"+WHEAT_SOFT+";-fx-text-fill:"+INK+";-fx-background-radius:8;-fx-padding:10 14;-fx-cursor:hand;-fx-font-weight:bold;";
+        String on="-fx-background-color:"+SOIL_DARK+";-fx-text-fill:"+WHEAT_SOFT+";-fx-font-weight:bold;-fx-background-radius:8;-fx-padding:10 14;-fx-cursor:hand;";
+        b.setStyle(off);
+        b.selectedProperty().addListener((o,a,s)->b.setStyle(s?on:off));
+    }
+    private String navStyle(boolean active){return active?"-fx-background-color:"+WHEAT+";-fx-text-fill:"+INK+";-fx-font-weight:bold;-fx-background-radius:8;-fx-padding:10 13;-fx-cursor:hand;":"-fx-background-color:transparent;-fx-text-fill:"+WHEAT_SOFT+";-fx-background-radius:8;-fx-padding:10 13;-fx-cursor:hand;-fx-font-weight:bold;";}
+    private String cardStyle(){return "-fx-background-color:"+CARD+";-fx-background-radius:14;-fx-border-radius:14;-fx-border-color:"+BORDER+";";}
+    private DropShadow softShadow(){DropShadow ds=new DropShadow();ds.setColor(Color.web(SOIL_DARK,0.16));ds.setRadius(18);ds.setOffsetY(6);return ds;}
 
     private String pretty(String raw){
         if(raw==null)return ""; String s=raw.replace('_',' '); s=s.replaceAll("([a-z0-9])([A-Z])","$1 $2");
         StringBuilder out=new StringBuilder(); for(String p:s.trim().split("\\s+")){if(p.isEmpty())continue;if(out.length()>0)out.append(' ');out.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1).toLowerCase());}return out.toString();
     }
 
-    private void alert(String title,String message){Alert a=new Alert(Alert.AlertType.INFORMATION);a.setTitle("FarmersIn");a.setHeaderText(title);a.setContentText(message);a.showAndWait();}
-    private void showError(Throwable ex){String msg=ex==null?"Unknown error":ex.getMessage();if(msg==null)msg=ex.toString();Alert a=new Alert(Alert.AlertType.ERROR);a.setTitle("FarmersIn");a.setHeaderText("Unable to complete this action");a.setContentText(msg);a.showAndWait();}
+    private void alert(String title,String message){Alert a=new Alert(Alert.AlertType.INFORMATION);a.setTitle("FarmersIn");a.setHeaderText(title);a.setContentText(message);a.getDialogPane().setStyle("-fx-background-color:"+CARD+";");a.showAndWait();}
+    private void showError(Throwable ex){String msg=ex==null?"Unknown error":ex.getMessage();if(msg==null)msg=ex.toString();Alert a=new Alert(Alert.AlertType.ERROR);a.setTitle("FarmersIn");a.setHeaderText("Unable to complete this action");a.setContentText(msg);a.getDialogPane().setStyle("-fx-background-color:"+CARD+";");a.showAndWait();}
     private void toast(String message,boolean error){alert(error?"Action failed":"Success",message);}
 
     private static class ActionDef {String label,method;boolean primary;ActionDef(String l,String m,boolean p){label=l;method=m;primary=p;}}
@@ -1032,7 +1112,7 @@ public class FarmersInFrontend {
     public static class FxLauncher extends Application {
         @Override
         public void start(Stage primaryStage) {
-            new FarmersInFrontend().startUi(primaryStage);
+            new frontend().startUi(primaryStage);
         }
     }
 }
