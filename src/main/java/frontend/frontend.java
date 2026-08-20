@@ -111,6 +111,65 @@ public class frontend {
     // ENTRY / ROLE SELECTION
     // ---------------------------------------------------------------------
 
+    private HBox furrow() {
+        HBox furrow = new HBox();
+        furrow.setPrefHeight(6);
+        furrow.setMaxWidth(Double.MAX_VALUE);
+        for (int i = 0; i < 18; i++) {
+            Region seg = new Region();
+            seg.setPrefWidth(1000.0 / 18);
+            seg.setPrefHeight(6);
+            seg.setStyle("-fx-background-color:" + (i % 2 == 0 ? SOIL_DARK : WHEAT) + ";");
+            furrow.getChildren().add(seg);
+        }
+        return furrow;
+    }
+
+    /**
+     * Wraps a PasswordField with a "Show/Hide" toggle button. Internally keeps
+     * a shadow TextField in sync (bidirectional text binding) and swaps which
+     * one is visible, since PasswordField itself cannot reveal its text.
+     */
+    private HBox passwordFieldWithToggle(PasswordField pf) {
+        TextField shadow = new TextField();
+        shadow.setPromptText(pf.getPromptText());
+        shadow.setPrefHeight(44);
+        styleInput(shadow);
+        shadow.textProperty().bindBidirectional(pf.textProperty());
+        shadow.setVisible(false);
+        shadow.setManaged(false);
+
+        StackPane stack = new StackPane(pf, shadow);
+        HBox.setHgrow(stack, Priority.ALWAYS);
+
+        Button eye = secondaryButton("Show");
+        eye.setPrefHeight(44);
+        eye.setOnAction(e -> {
+            boolean nowShowing = !shadow.isVisible();
+            shadow.setVisible(nowShowing);
+            shadow.setManaged(nowShowing);
+            pf.setVisible(!nowShowing);
+            pf.setManaged(!nowShowing);
+            eye.setText(nowShowing ? "Hide" : "Show");
+        });
+
+        HBox row = new HBox(8, stack, eye);
+        row.setAlignment(Pos.CENTER_LEFT);
+        return row;
+    }
+
+    private String sha256Hex(String s) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : digest) hex.append(String.format("%02x", b));
+            return hex.toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private void showWelcome() {
         VBox root = new VBox(22);
         root.setAlignment(Pos.CENTER);
@@ -137,16 +196,7 @@ public class frontend {
         card.setEffect(softShadow());
 
         // decorative "stitched furrow" accent strip — signature touch
-        HBox furrow = new HBox();
-        furrow.setPrefHeight(6);
-        furrow.setMaxWidth(Double.MAX_VALUE);
-        for (int i = 0; i < 18; i++) {
-            Region seg = new Region();
-            seg.setPrefWidth(1000.0 / 18);
-            seg.setPrefHeight(6);
-            seg.setStyle("-fx-background-color:" + (i % 2 == 0 ? SOIL_DARK : WHEAT) + ";");
-            furrow.getChildren().add(seg);
-        }
+        HBox furrow = furrow();
 
         Label heading = new Label("Sign in to FarmersIn");
         heading.setFont(Font.font("Georgia", FontWeight.BOLD, 24));
@@ -263,17 +313,173 @@ public class frontend {
         note.setTextFill(Color.web(MUTED));
         note.setStyle("-fx-font-size: 12px;");
 
+        Button toSignup = secondaryButton("New here? Create an account");
+        toSignup.setMaxWidth(Double.MAX_VALUE);
+        toSignup.setOnAction(e -> showSignup());
+
         card.getChildren().addAll(
                 furrow, heading, help, roleBox,
                 labeled("Email", emailField),
-                labeled("Password", passwordField),
-                loginState, enter, note
+                labeled("Password", passwordFieldWithToggle(passwordField)),
+                loginState, enter, toSignup, note
         );
         root.getChildren().addAll(brandRow, slogan, card);
         double[] size = fitToScreen(1180, 760);
         stage.setScene(new Scene(root, size[0], size[1]));
         stage.centerOnScreen();
         Platform.runLater(emailField::requestFocus);
+    }
+
+    private void showSignup() {
+        VBox root = new VBox(22);
+        root.setAlignment(Pos.CENTER);
+        root.setPadding(new Insets(42));
+        root.setStyle("-fx-background-color:" + BG + ";");
+
+        HBox brandRow = new HBox(10);
+        brandRow.setAlignment(Pos.CENTER);
+        Label leaf = new Label("\uD83C\uDF3E");
+        leaf.setFont(Font.font(30));
+        Label brand = new Label("FarmersIn");
+        brand.setFont(Font.font("Georgia", FontWeight.EXTRA_BOLD, 40));
+        brand.setTextFill(Color.web(SOIL_DARK));
+        brandRow.getChildren().addAll(leaf, brand);
+
+        VBox card = new VBox(16);
+        card.setMaxWidth(590);
+        card.setPadding(new Insets(32, 30, 30, 30));
+        card.setStyle(cardStyle());
+        card.setEffect(softShadow());
+
+        Label heading = new Label("Create your FarmersIn account");
+        heading.setFont(Font.font("Georgia", FontWeight.BOLD, 24));
+        heading.setTextFill(Color.web(SOIL_DARK));
+
+        Label help = new Label("Register as a buyer or supplier. Admin accounts are created separately.");
+        help.setWrapText(true);
+        help.setTextFill(Color.web(MUTED));
+
+        ToggleGroup roles = new ToggleGroup();
+        HBox roleBox = new HBox(10);
+        roleBox.setAlignment(Pos.CENTER_LEFT);
+        for (String r : List.of("BUYER", "SUPPLIER")) {
+            ToggleButton b = new ToggleButton(pretty(r));
+            b.setToggleGroup(roles);
+            b.setUserData(r);
+            b.setPrefWidth(150);
+            styleRoleToggle(b);
+            roleBox.getChildren().add(b);
+            if (r.equals("BUYER")) b.setSelected(true);
+        }
+
+        TextField nameField = new TextField();
+        nameField.setPromptText("Jane Doe");
+        nameField.setPrefHeight(44);
+        styleInput(nameField);
+
+        TextField emailField = new TextField();
+        emailField.setPromptText("name@example.com");
+        emailField.setPrefHeight(44);
+        styleInput(emailField);
+
+        PasswordField passwordField = new PasswordField();
+        passwordField.setPromptText("Create a password");
+        passwordField.setPrefHeight(44);
+        styleInput(passwordField);
+
+        PasswordField confirmField = new PasswordField();
+        confirmField.setPromptText("Re-enter password");
+        confirmField.setPrefHeight(44);
+        styleInput(confirmField);
+
+        Label state = new Label();
+        state.setTextFill(Color.web(MUTED));
+        state.setWrapText(true);
+
+        Button create = primaryButton("Create Account");
+        create.setMaxWidth(Double.MAX_VALUE);
+        create.setPrefHeight(46);
+
+        Runnable submit = () -> {
+            Toggle t = roles.getSelectedToggle();
+            String selectedRole = t == null ? "BUYER" : String.valueOf(t.getUserData());
+
+            String name = nameField.getText() == null ? "" : nameField.getText().trim();
+            String email = emailField.getText() == null ? "" : emailField.getText().trim().toLowerCase();
+            String password = passwordField.getText() == null ? "" : passwordField.getText();
+            String confirm = confirmField.getText() == null ? "" : confirmField.getText();
+
+            if (name.isBlank()) { alert("Name required", "Please enter your full name."); nameField.requestFocus(); return; }
+            if (email.isBlank()) { alert("Email required", "Please enter your email address."); emailField.requestFocus(); return; }
+            if (password.length() < 6) { alert("Password too short", "Please choose a password with at least 6 characters."); passwordField.requestFocus(); return; }
+            if (!password.equals(confirm)) { alert("Passwords don't match", "Please make sure both password fields match."); confirmField.requestFocus(); return; }
+
+            create.setDisable(true);
+            state.setText("Checking email…");
+
+            runAsync(() -> invoke("UserService", "getUserByEmail", email), existing -> {
+                if (existing != null) {
+                    create.setDisable(false);
+                    state.setText("");
+                    alert("Account exists", "An account with this email already exists. Try signing in instead.");
+                    return;
+                }
+
+                state.setText("Creating account…");
+                try {
+                    Class<?> userClass = Class.forName("model.User");
+                    Object user = userClass.getDeclaredConstructor().newInstance();
+                    setIfPossible(user, "setFullName", name);
+                    setIfPossible(user, "setEmail", email);
+                    setIfPossible(user, "setPasswordHash", sha256Hex(password));
+                    setIfPossible(user, "setRole", selectedRole);
+                    setIfPossible(user, "setAccountStatus", "ACTIVE");
+
+                    runAsync(() -> invokeFirstAvailable("UserService",
+                                    List.of("registerUser", "addUser", "createUser", "signUp", "registerNewUser"), user),
+                            x -> {
+                                create.setDisable(false);
+                                state.setText("");
+                                alert("Account created", "Your account has been created. You can now sign in.");
+                                showWelcome();
+                            },
+                            ex -> {
+                                create.setDisable(false);
+                                state.setText("");
+                                alert("Sign up failed", cleanErrorMessage(ex));
+                            });
+                } catch (Exception ex) {
+                    create.setDisable(false);
+                    state.setText("");
+                    showError(ex);
+                }
+            }, ex -> {
+                create.setDisable(false);
+                state.setText("");
+                alert("Sign up failed", cleanErrorMessage(ex));
+            });
+        };
+
+        create.setOnAction(e -> submit.run());
+        confirmField.setOnAction(e -> submit.run());
+
+        Button backToLogin = secondaryButton("Already have an account? Sign In");
+        backToLogin.setMaxWidth(Double.MAX_VALUE);
+        backToLogin.setOnAction(e -> showWelcome());
+
+        card.getChildren().addAll(
+                furrow(), heading, help, roleBox,
+                labeled("Full Name", nameField),
+                labeled("Email", emailField),
+                labeled("Password", passwordFieldWithToggle(passwordField)),
+                labeled("Confirm Password", passwordFieldWithToggle(confirmField)),
+                state, create, backToLogin
+        );
+        root.getChildren().addAll(brandRow, card);
+        double[] size = fitToScreen(1180, 820);
+        stage.setScene(new Scene(root, size[0], size[1]));
+        stage.centerOnScreen();
+        Platform.runLater(nameField::requestFocus);
     }
 
     private void resolveProfileThenOpen() {
@@ -359,6 +565,7 @@ public class frontend {
             addNav("Complaints", this::showMyComplaints);
             addNav("Notifications", this::showNotifications);
         } else {
+            addNav("My Profile", this::showSupplierProfile);
             addNav("My Listings", this::showSupplierListings);
             addNav("My Orders", this::showSupplierOrders);
             addNav("Deliveries", this::showDeliveries);
@@ -484,6 +691,17 @@ public class frontend {
         Runnable load = () -> loadInto(table, state,
                 buyer ? "buyerprofile" : "supplier_profiles",
                 "getPendingVerifications");
+
+        if (!buyer) {
+            Button editRow = secondaryButton("Edit Selected");
+            editRow.setOnAction(e -> {
+                Object row = table.getSelectionModel().getSelectedItem();
+                if (row == null) { alert("Select a request", "Choose a supplier request first."); return; }
+                modelEditor("SupplierProfile", row, obj -> invokeAndReload("supplier_profiles", "updateSupplierProfile", obj, load));
+            });
+            actions.getChildren().add(editRow);
+        }
+
         refresh.setOnAction(e -> load.run());
         approve.setOnAction(e -> updateApproval(table, buyer, "APPROVED", load));
         reject.setOnAction(e -> updateApproval(table, buyer, "REJECTED", load));
@@ -586,16 +804,66 @@ public class frontend {
         simpleServiceTable("OrderService", "getOrdersBySupplierId", currentProfileId);
     }
 
-    // ---------------------------------------------------------------------
-    // SUPPLIER PRODUCT LISTINGS
-    // (aligned with model.SupplierProduct: supplierProductId, supplierId,
-    //  productId, pricePerUnit, availableQuantity, minimumOrderQuantity,
-    //  unitType, qualityGrade, productionOrHarvestDate, expiryDate,
-    //  listingStatus, createdAt, updatedAt)
-    // ---------------------------------------------------------------------
+    private void showSupplierProfile() {
+        setHeader("My Profile", "View and update your supplier account details");
+        if (currentUserId == null) { showMissingProfile("Supplier"); return; }
+
+        VBox loading = new VBox(12, new Label("Loading profile…"));
+        show(loading);
+
+        runAsync(() -> invoke("supplier_profiles", "getSupplierByUserId", currentUserId),
+                result -> {
+                    if (result == null) {
+                        currentProfileId = null;
+                        renderCreateSupplierProfile();
+                    } else {
+                        currentProfileId = extractInt(result, "getSupplierId");
+                        renderSupplierProfileView(result);
+                    }
+                },
+                ex -> renderCreateSupplierProfile());
+    }
+
+    private void renderCreateSupplierProfile() {
+        VBox root = new VBox(16);
+        VBox info = panel("No supplier profile yet",
+                "Create your supplier profile to start listing produce. New profiles start as PENDING and need admin approval before you can list products.");
+        Button create = primaryButton("Create Supplier Profile");
+        create.setOnAction(e -> modelEditor("SupplierProfile", null, obj -> {
+            setIfPossible(obj, "setUserId", currentUserId);
+            runAsync(() -> invoke("supplier_profiles", "addSupplierProfile", obj), x -> {
+                toast("Supplier profile created — pending approval", false);
+                showSupplierProfile();
+            }, this::showError);
+        }));
+        root.getChildren().addAll(info, create);
+        show(root);
+    }
+
+    private void renderSupplierProfileView(Object profile) {
+        VBox root = new VBox(16);
+
+        VBox card = new VBox(10);
+        card.setPadding(new Insets(20));
+        card.setStyle(cardStyle());
+        card.setEffect(softShadow());
+        Label title = new Label("Supplier Profile");
+        title.setFont(Font.font("Georgia", FontWeight.BOLD, 18));
+        title.setTextFill(Color.web(INK));
+        card.getChildren().addAll(title, buildDetailGrid(profile));
+
+        Button edit = primaryButton("Edit Profile");
+        edit.setOnAction(e -> modelEditor("SupplierProfile", profile, obj -> runAsync(
+                () -> invoke("supplier_profiles", "updateSupplierProfile", obj),
+                x -> { toast("Profile updated", false); showSupplierProfile(); },
+                this::showError)));
+
+        root.getChildren().addAll(card, edit);
+        show(root);
+    }
 
     private void showSupplierListings() {
-        setHeader("My Listings", "Add the products you supply, with weight and price per kg");
+        setHeader("My Listings", "Manage produce offered by your supplier account");
         if (currentProfileId == null) { showMissingProfile("Supplier"); return; }
         VBox root = new VBox(12);
         TableView<Object> table = dataTable();
@@ -603,152 +871,18 @@ public class frontend {
         Runnable reload = () -> loadInto(table, state, "supplier_products", "getListingsBySupplierId", currentProfileId);
         HBox actions = new HBox(10);
         Button refresh = secondaryButton("Refresh"); refresh.setOnAction(e -> reload.run());
-        Button add = primaryButton("Add Product"); add.setOnAction(e -> openSupplierProductForm(null, reload));
+        Button add = primaryButton("New Listing"); add.setOnAction(e -> modelEditor("SupplierProduct", null, obj -> {
+            setIfPossible(obj, "setSupplierId", currentProfileId);
+            invokeAndReload("supplier_products", "addSupplierProduct", obj, reload);
+        }));
         Button edit = secondaryButton("Edit Selected"); edit.setOnAction(e -> {
             Object row = table.getSelectionModel().getSelectedItem();
-            if (row == null) { alert("Select a listing", "Choose a product listing first."); return; }
-            openSupplierProductForm(row, reload);
+            if (row == null) { alert("Select a listing", "Choose a supplier listing first."); return; }
+            modelEditor("SupplierProduct", row, obj -> invokeAndReload("supplier_products", "updateSupplierProduct", obj, reload));
         });
         actions.getChildren().addAll(refresh, add, edit);
         root.getChildren().addAll(actions, state, table); VBox.setVgrow(table, Priority.ALWAYS);
         show(root); reload.run();
-    }
-
-    /**
-     * Purpose-built "Add / Edit Product" form for a supplier's own listings.
-     * The supplier picks one of the marketplace's products and sets the
-     * weight they have available (in kg) and the price per kg, plus a
-     * couple of optional details. Talks to dao.supplier_products (and
-     * ProductService for the product list) through the same reflection
-     * helpers as the rest of the app, so no model/dao imports are needed
-     * in this file.
-     */
-    private void openSupplierProductForm(Object existingRow, Runnable reload) {
-        boolean editing = existingRow != null;
-        Dialog<ButtonType> dialog = new Dialog<>();
-        dialog.setTitle(editing ? "Edit Product Listing" : "Add Product");
-        ButtonType save = new ButtonType("Save", ButtonBar.ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().addAll(save, ButtonType.CANCEL);
-        dialog.getDialogPane().setStyle("-fx-background-color:" + CARD + ";");
-
-        ComboBox<Object> productBox = new ComboBox<>();
-        productBox.setPromptText("Select a product…");
-        productBox.setPrefWidth(300);
-        productBox.setConverter(new javafx.util.StringConverter<Object>() {
-            @Override public String toString(Object p) {
-                if (p == null) return "";
-                String name = extractString(p, "getProductName");
-                if (name == null) name = extractString(p, "getName");
-                Integer id = firstInt(p, "getProductId", "getId");
-                return name != null ? name : ("Product #" + id);
-            }
-            @Override public Object fromString(String s) { return null; }
-        });
-
-        TextField weightField = new TextField();
-        weightField.setPromptText("e.g. 500");
-        styleInput(weightField);
-
-        TextField priceField = new TextField();
-        priceField.setPromptText("e.g. 120");
-        styleInput(priceField);
-
-        TextField minOrderField = new TextField();
-        minOrderField.setPromptText("e.g. 5 (optional)");
-        styleInput(minOrderField);
-
-        ComboBox<String> gradeBox = new ComboBox<>(FXCollections.observableArrayList("Grade A", "Grade B", "Grade C"));
-        gradeBox.setPromptText("Optional");
-
-        DatePicker harvestPicker = new DatePicker();
-        DatePicker expiryPicker = new DatePicker();
-
-        Integer existingProductId = editing ? firstInt(existingRow, "getProductId") : null;
-        if (editing) {
-            Object qty = safeGetterValue(existingRow, "getAvailableQuantity");
-            Object price = safeGetterValue(existingRow, "getPricePerUnit");
-            Object minOrder = safeGetterValue(existingRow, "getMinimumOrderQuantity");
-            Object grade = safeGetterValue(existingRow, "getQualityGrade");
-            Object harvest = safeGetterValue(existingRow, "getProductionOrHarvestDate");
-            Object expiry = safeGetterValue(existingRow, "getExpiryDate");
-            if (qty != null) weightField.setText(String.valueOf(qty));
-            if (price != null) priceField.setText(String.valueOf(price));
-            if (minOrder != null) minOrderField.setText(String.valueOf(minOrder));
-            if (grade != null) gradeBox.setValue(String.valueOf(grade));
-            if (harvest instanceof Date) harvestPicker.setValue(((Date) harvest).toLocalDate());
-            if (expiry instanceof Date) expiryPicker.setValue(((Date) expiry).toLocalDate());
-        }
-
-        GridPane grid = new GridPane(); grid.setHgap(12); grid.setVgap(10); grid.setPadding(new Insets(16));
-        int r = 0;
-        grid.add(labeled("Product", productBox), 0, r++, 2, 1);
-        grid.add(labeled("Weight (kg)", weightField), 0, r++, 2, 1);
-        grid.add(labeled("Price per Kg", priceField), 0, r++, 2, 1);
-        grid.add(labeled("Minimum Order (kg)", minOrderField), 0, r++, 2, 1);
-        grid.add(labeled("Quality Grade", gradeBox), 0, r++, 2, 1);
-        grid.add(labeled("Harvest Date", harvestPicker), 0, r++, 2, 1);
-        grid.add(labeled("Expiry Date", expiryPicker), 0, r++, 2, 1);
-
-        ScrollPane sp = new ScrollPane(grid); sp.setFitToWidth(true); sp.setPrefViewportWidth(400); sp.setPrefViewportHeight(420);
-        dialog.getDialogPane().setContent(sp);
-
-        // Load active products for the dropdown, then pre-select the
-        // current one when editing an existing listing.
-        runAsync(() -> invoke("ProductService", "getAllActiveProducts"), result -> {
-            List<Object> products = normalizeRows(result);
-            productBox.setItems(FXCollections.observableArrayList(products));
-            if (existingProductId != null) {
-                products.stream()
-                        .filter(p -> existingProductId.equals(firstInt(p, "getProductId", "getId")))
-                        .findFirst().ifPresent(productBox::setValue);
-            }
-        }, this::showError);
-
-        dialog.showAndWait().filter(b -> b == save).ifPresent(b -> {
-            try {
-                Object selectedProduct = productBox.getValue();
-                if (selectedProduct == null) { alert("Select a product", "Please choose which product you're listing."); return; }
-                Integer productId = firstInt(selectedProduct, "getProductId", "getId");
-
-                BigDecimal weight = parsePositiveDecimal(weightField.getText());
-                BigDecimal price = parsePositiveDecimal(priceField.getText());
-                if (weight == null) { alert("Weight required", "Enter the available weight in kg (e.g. 500)."); return; }
-                if (price == null) { alert("Price required", "Enter the price per kg (e.g. 120)."); return; }
-
-                Class<?> cls = Class.forName("model.SupplierProduct");
-                Object obj = editing ? existingRow : cls.getDeclaredConstructor().newInstance();
-
-                setIfPossible(obj, "setSupplierId", currentProfileId);
-                setIfPossible(obj, "setProductId", productId);
-                setIfPossible(obj, "setAvailableQuantity", weight);
-                setIfPossible(obj, "setPricePerUnit", price);
-                setIfPossible(obj, "setUnitType", "kg");
-                if (!minOrderField.getText().isBlank()) {
-                    BigDecimal minOrder = parsePositiveDecimal(minOrderField.getText());
-                    if (minOrder != null) setIfPossible(obj, "setMinimumOrderQuantity", minOrder);
-                }
-                if (gradeBox.getValue() != null) setIfPossible(obj, "setQualityGrade", gradeBox.getValue());
-                if (harvestPicker.getValue() != null) setIfPossible(obj, "setProductionOrHarvestDate", Date.valueOf(harvestPicker.getValue()));
-                if (expiryPicker.getValue() != null) setIfPossible(obj, "setExpiryDate", Date.valueOf(expiryPicker.getValue()));
-                if (!editing) setIfPossible(obj, "setListingStatus", "PENDING");
-
-                invokeAndReload("supplier_products", editing ? "updateSupplierProduct" : "addSupplierProduct", obj, reload);
-            } catch (Exception ex) { showError(ex); }
-        });
-    }
-
-    private Object safeGetterValue(Object obj, String getter) {
-        try { return obj.getClass().getMethod(getter).invoke(obj); } catch (Exception e) { return null; }
-    }
-
-    private BigDecimal parsePositiveDecimal(String s) {
-        if (s == null) return null;
-        s = s.trim();
-        if (s.isEmpty()) return null;
-        try {
-            BigDecimal v = new BigDecimal(s);
-            return v.compareTo(BigDecimal.ZERO) > 0 ? v : null;
-        } catch (Exception e) { return null; }
     }
 
     private void showBuyerPayments() {
@@ -939,7 +1073,7 @@ public class frontend {
         for (Method g : getters) {
             TableColumn<Object,Object> c = new TableColumn<>(pretty(propertyName(g)));
             c.setCellValueFactory(cd -> new ReadOnlyObjectWrapper<>(safeGetter(cd.getValue(), g)));
-            c.setPrefWidth(Math.min(220, Math.max(105, c.getText().length()*9 + 30)));
+            c.setPrefWidth(Math.min(260, Math.max(130, c.getText().length()*9 + 40)));
             table.getColumns().add(c);
         }
     }
@@ -976,7 +1110,7 @@ public class frontend {
 
     private TableView<Object> dataTable() {
         TableView<Object> t = new TableView<>();
-        t.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        t.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY);
         Label placeholder = new Label("No data to display");
         placeholder.setTextFill(Color.web(MUTED));
         placeholder.setStyle("-fx-font-style:italic;");
@@ -992,6 +1126,13 @@ public class frontend {
 
     private void showObjectDetails(Object obj) {
         Dialog<Void> d = new Dialog<>(); d.setTitle("Record Details"); d.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        GridPane grid = buildDetailGrid(obj);
+        ScrollPane sp=new ScrollPane(grid); sp.setFitToWidth(true); sp.setPrefViewportHeight(500); sp.setPrefViewportWidth(650);
+        d.getDialogPane().setContent(sp); d.getDialogPane().setStyle("-fx-background-color:" + CARD + ";");
+        d.showAndWait();
+    }
+
+    private GridPane buildDetailGrid(Object obj) {
         GridPane grid = new GridPane(); grid.setHgap(14); grid.setVgap(10); grid.setPadding(new Insets(15));
         int r=0;
         for(Method m: readableGettersAll(obj.getClass())) {
@@ -999,9 +1140,7 @@ public class frontend {
             Label v=new Label(String.valueOf(safeGetter(obj,m))); v.setWrapText(true); v.setMaxWidth(450); v.setTextFill(Color.web(INK));
             grid.add(k,0,r); grid.add(v,1,r++);
         }
-        ScrollPane sp=new ScrollPane(grid); sp.setFitToWidth(true); sp.setPrefViewportHeight(500); sp.setPrefViewportWidth(650);
-        d.getDialogPane().setContent(sp); d.getDialogPane().setStyle("-fx-background-color:" + CARD + ";");
-        d.showAndWait();
+        return grid;
     }
 
     private List<Method> readableGettersAll(Class<?> c) {
@@ -1085,6 +1224,36 @@ public class frontend {
 
     private void invokeAndReload(String service,String method,Object obj,Runnable reload){
         runAsync(() -> invoke(service,method,obj), x->{ toast("Saved successfully",false); reload.run(); }, this::showError);
+    }
+
+    /**
+     * Like invoke(), but tries several candidate method names in order and
+     * uses the first one that actually exists on the service class with a
+     * compatible signature. Used where the real backend method name isn't
+     * known for certain (e.g. user registration on signup).
+     */
+    private Object invokeFirstAvailable(String serviceSimpleName, List<String> candidateMethodNames, Object... args) {
+        Class<?> serviceClass;
+        try {
+            serviceClass = findServiceClass(serviceSimpleName);
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException(e.getMessage() == null ? e.toString() : e.getMessage(), e);
+        }
+        for (String name : candidateMethodNames) {
+            Method method = findCompatibleMethod(serviceClass, name, args);
+            if (method == null) continue;
+            try {
+                Object service = serviceClass.getDeclaredConstructor().newInstance();
+                return method.invoke(service, args);
+            } catch (InvocationTargetException e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                throw new RuntimeException(cause.getMessage() == null ? cause.toString() : cause.getMessage(), cause);
+            } catch (Exception e) {
+                throw new RuntimeException(e.getMessage() == null ? e.toString() : e.getMessage(), e);
+            }
+        }
+        throw new RuntimeException("Could not find a registration method on " + serviceClass.getName()
+                + ". Tried: " + candidateMethodNames + " — let the developer know the real method name.");
     }
 
     private Object invoke(String serviceSimpleName, String methodName, Object... args) {
@@ -1174,15 +1343,8 @@ public class frontend {
 
         // Also supports a common SHA-256 hex password hash without requiring
         // any additional dependency or backend-file change.
-        try {
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] digest = md.digest(entered.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder();
-            for (byte b : digest) hex.append(String.format("%02x", b));
-            return hex.toString().equalsIgnoreCase(stored.trim());
-        } catch (Exception ignored) {
-            return false;
-        }
+        String hashed = sha256Hex(entered);
+        return hashed != null && hashed.equalsIgnoreCase(stored.trim());
     }
 
     private String cleanErrorMessage(Throwable ex) {

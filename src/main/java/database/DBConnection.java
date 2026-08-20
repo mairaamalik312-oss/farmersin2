@@ -13,7 +13,7 @@ public class DBConnection {
             "root";
 
     private static final String PASSWORD =
-            "$tudent@545758";
+            "maira000";
 
     public static Connection getConnection()
             throws SQLException {
