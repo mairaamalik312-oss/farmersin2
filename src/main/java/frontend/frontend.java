@@ -586,8 +586,16 @@ public class frontend {
         simpleServiceTable("OrderService", "getOrdersBySupplierId", currentProfileId);
     }
 
+    // ---------------------------------------------------------------------
+    // SUPPLIER PRODUCT LISTINGS
+    // (aligned with model.SupplierProduct: supplierProductId, supplierId,
+    //  productId, pricePerUnit, availableQuantity, minimumOrderQuantity,
+    //  unitType, qualityGrade, productionOrHarvestDate, expiryDate,
+    //  listingStatus, createdAt, updatedAt)
+    // ---------------------------------------------------------------------
+
     private void showSupplierListings() {
-        setHeader("My Listings", "Manage produce offered by your supplier account");
+        setHeader("My Listings", "Add the products you supply, with weight and price per kg");
         if (currentProfileId == null) { showMissingProfile("Supplier"); return; }
         VBox root = new VBox(12);
         TableView<Object> table = dataTable();
@@ -595,18 +603,152 @@ public class frontend {
         Runnable reload = () -> loadInto(table, state, "supplier_products", "getListingsBySupplierId", currentProfileId);
         HBox actions = new HBox(10);
         Button refresh = secondaryButton("Refresh"); refresh.setOnAction(e -> reload.run());
-        Button add = primaryButton("New Listing"); add.setOnAction(e -> modelEditor("SupplierProduct", null, obj -> {
-            setIfPossible(obj, "setSupplierId", currentProfileId);
-            invokeAndReload("supplier_products", "addSupplierProduct", obj, reload);
-        }));
+        Button add = primaryButton("Add Product"); add.setOnAction(e -> openSupplierProductForm(null, reload));
         Button edit = secondaryButton("Edit Selected"); edit.setOnAction(e -> {
             Object row = table.getSelectionModel().getSelectedItem();
-            if (row == null) { alert("Select a listing", "Choose a supplier listing first."); return; }
-            modelEditor("SupplierProduct", row, obj -> invokeAndReload("supplier_products", "updateSupplierProduct", obj, reload));
+            if (row == null) { alert("Select a listing", "Choose a product listing first."); return; }
+            openSupplierProductForm(row, reload);
         });
         actions.getChildren().addAll(refresh, add, edit);
         root.getChildren().addAll(actions, state, table); VBox.setVgrow(table, Priority.ALWAYS);
         show(root); reload.run();
+    }
+
+    /**
+     * Purpose-built "Add / Edit Product" form for a supplier's own listings.
+     * The supplier picks one of the marketplace's products and sets the
+     * weight they have available (in kg) and the price per kg, plus a
+     * couple of optional details. Talks to dao.supplier_products (and
+     * ProductService for the product list) through the same reflection
+     * helpers as the rest of the app, so no model/dao imports are needed
+     * in this file.
+     */
+    private void openSupplierProductForm(Object existingRow, Runnable reload) {
+        boolean editing = existingRow != null;
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle(editing ? "Edit Product Listing" : "Add Product");
+        ButtonType save = new ButtonType("Save", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(save, ButtonType.CANCEL);
+        dialog.getDialogPane().setStyle("-fx-background-color:" + CARD + ";");
+
+        ComboBox<Object> productBox = new ComboBox<>();
+        productBox.setPromptText("Select a product…");
+        productBox.setPrefWidth(300);
+        productBox.setConverter(new javafx.util.StringConverter<Object>() {
+            @Override public String toString(Object p) {
+                if (p == null) return "";
+                String name = extractString(p, "getProductName");
+                if (name == null) name = extractString(p, "getName");
+                Integer id = firstInt(p, "getProductId", "getId");
+                return name != null ? name : ("Product #" + id);
+            }
+            @Override public Object fromString(String s) { return null; }
+        });
+
+        TextField weightField = new TextField();
+        weightField.setPromptText("e.g. 500");
+        styleInput(weightField);
+
+        TextField priceField = new TextField();
+        priceField.setPromptText("e.g. 120");
+        styleInput(priceField);
+
+        TextField minOrderField = new TextField();
+        minOrderField.setPromptText("e.g. 5 (optional)");
+        styleInput(minOrderField);
+
+        ComboBox<String> gradeBox = new ComboBox<>(FXCollections.observableArrayList("Grade A", "Grade B", "Grade C"));
+        gradeBox.setPromptText("Optional");
+
+        DatePicker harvestPicker = new DatePicker();
+        DatePicker expiryPicker = new DatePicker();
+
+        Integer existingProductId = editing ? firstInt(existingRow, "getProductId") : null;
+        if (editing) {
+            Object qty = safeGetterValue(existingRow, "getAvailableQuantity");
+            Object price = safeGetterValue(existingRow, "getPricePerUnit");
+            Object minOrder = safeGetterValue(existingRow, "getMinimumOrderQuantity");
+            Object grade = safeGetterValue(existingRow, "getQualityGrade");
+            Object harvest = safeGetterValue(existingRow, "getProductionOrHarvestDate");
+            Object expiry = safeGetterValue(existingRow, "getExpiryDate");
+            if (qty != null) weightField.setText(String.valueOf(qty));
+            if (price != null) priceField.setText(String.valueOf(price));
+            if (minOrder != null) minOrderField.setText(String.valueOf(minOrder));
+            if (grade != null) gradeBox.setValue(String.valueOf(grade));
+            if (harvest instanceof Date) harvestPicker.setValue(((Date) harvest).toLocalDate());
+            if (expiry instanceof Date) expiryPicker.setValue(((Date) expiry).toLocalDate());
+        }
+
+        GridPane grid = new GridPane(); grid.setHgap(12); grid.setVgap(10); grid.setPadding(new Insets(16));
+        int r = 0;
+        grid.add(labeled("Product", productBox), 0, r++, 2, 1);
+        grid.add(labeled("Weight (kg)", weightField), 0, r++, 2, 1);
+        grid.add(labeled("Price per Kg", priceField), 0, r++, 2, 1);
+        grid.add(labeled("Minimum Order (kg)", minOrderField), 0, r++, 2, 1);
+        grid.add(labeled("Quality Grade", gradeBox), 0, r++, 2, 1);
+        grid.add(labeled("Harvest Date", harvestPicker), 0, r++, 2, 1);
+        grid.add(labeled("Expiry Date", expiryPicker), 0, r++, 2, 1);
+
+        ScrollPane sp = new ScrollPane(grid); sp.setFitToWidth(true); sp.setPrefViewportWidth(400); sp.setPrefViewportHeight(420);
+        dialog.getDialogPane().setContent(sp);
+
+        // Load active products for the dropdown, then pre-select the
+        // current one when editing an existing listing.
+        runAsync(() -> invoke("ProductService", "getAllActiveProducts"), result -> {
+            List<Object> products = normalizeRows(result);
+            productBox.setItems(FXCollections.observableArrayList(products));
+            if (existingProductId != null) {
+                products.stream()
+                        .filter(p -> existingProductId.equals(firstInt(p, "getProductId", "getId")))
+                        .findFirst().ifPresent(productBox::setValue);
+            }
+        }, this::showError);
+
+        dialog.showAndWait().filter(b -> b == save).ifPresent(b -> {
+            try {
+                Object selectedProduct = productBox.getValue();
+                if (selectedProduct == null) { alert("Select a product", "Please choose which product you're listing."); return; }
+                Integer productId = firstInt(selectedProduct, "getProductId", "getId");
+
+                BigDecimal weight = parsePositiveDecimal(weightField.getText());
+                BigDecimal price = parsePositiveDecimal(priceField.getText());
+                if (weight == null) { alert("Weight required", "Enter the available weight in kg (e.g. 500)."); return; }
+                if (price == null) { alert("Price required", "Enter the price per kg (e.g. 120)."); return; }
+
+                Class<?> cls = Class.forName("model.SupplierProduct");
+                Object obj = editing ? existingRow : cls.getDeclaredConstructor().newInstance();
+
+                setIfPossible(obj, "setSupplierId", currentProfileId);
+                setIfPossible(obj, "setProductId", productId);
+                setIfPossible(obj, "setAvailableQuantity", weight);
+                setIfPossible(obj, "setPricePerUnit", price);
+                setIfPossible(obj, "setUnitType", "kg");
+                if (!minOrderField.getText().isBlank()) {
+                    BigDecimal minOrder = parsePositiveDecimal(minOrderField.getText());
+                    if (minOrder != null) setIfPossible(obj, "setMinimumOrderQuantity", minOrder);
+                }
+                if (gradeBox.getValue() != null) setIfPossible(obj, "setQualityGrade", gradeBox.getValue());
+                if (harvestPicker.getValue() != null) setIfPossible(obj, "setProductionOrHarvestDate", Date.valueOf(harvestPicker.getValue()));
+                if (expiryPicker.getValue() != null) setIfPossible(obj, "setExpiryDate", Date.valueOf(expiryPicker.getValue()));
+                if (!editing) setIfPossible(obj, "setListingStatus", "PENDING");
+
+                invokeAndReload("supplier_products", editing ? "updateSupplierProduct" : "addSupplierProduct", obj, reload);
+            } catch (Exception ex) { showError(ex); }
+        });
+    }
+
+    private Object safeGetterValue(Object obj, String getter) {
+        try { return obj.getClass().getMethod(getter).invoke(obj); } catch (Exception e) { return null; }
+    }
+
+    private BigDecimal parsePositiveDecimal(String s) {
+        if (s == null) return null;
+        s = s.trim();
+        if (s.isEmpty()) return null;
+        try {
+            BigDecimal v = new BigDecimal(s);
+            return v.compareTo(BigDecimal.ZERO) > 0 ? v : null;
+        } catch (Exception e) { return null; }
     }
 
     private void showBuyerPayments() {
