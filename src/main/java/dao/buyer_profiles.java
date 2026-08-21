@@ -9,13 +9,22 @@ import java.util.List;
 
 public class buyer_profiles {
 
-    // 1. Create a New Buyer Profile
+    // 1. Create a New Buyer Profile (standalone — opens its own connection)
     public boolean addBuyerProfile(BuyerProfile profile) throws SQLException {
+        try (Connection conn = DBConnection.getConnection()) {
+            return addBuyerProfile(conn, profile);
+        }
+    }
+
+    // 1b. Create a New Buyer Profile using an EXISTING connection.
+    // Use this version when the insert must participate in a caller's
+    // transaction (e.g. during user registration, so the user row and
+    // the buyer profile row are created/rolled back together).
+    public boolean addBuyerProfile(Connection conn, BuyerProfile profile) throws SQLException {
         String query = "INSERT INTO buyer_profiles (user_id, business_name, business_type, " +
                 "registration_number, tax_number, verification_status) VALUES (?, ?, ?, ?, ?, ?)";
 
-        try (Connection conn = DBConnection.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement stmt = conn.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
 
             stmt.setInt(1, profile.getUserId());
             stmt.setString(2, profile.getBusinessName());
@@ -72,6 +81,23 @@ public class buyer_profiles {
         try (Connection conn = DBConnection.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query)) {
 
+            stmt.setInt(1, userId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return mapResultSetToBuyerProfile(rs);
+                }
+            }
+        }
+        return null;
+    }
+
+    // 3b. Get Buyer Profile by User ID using an EXISTING connection
+    // (useful inside the same transaction as user creation, e.g. to
+    // double-check a profile was actually persisted before commit).
+    public BuyerProfile getBuyerByUserId(Connection conn, int userId) throws SQLException {
+        String query = "SELECT * FROM buyer_profiles WHERE user_id = ?";
+
+        try (PreparedStatement stmt = conn.prepareStatement(query)) {
             stmt.setInt(1, userId);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {

@@ -438,10 +438,35 @@ public class frontend {
                     runAsync(() -> invokeFirstAvailable("UserService",
                                     List.of("registerUser", "addUser", "createUser", "signUp", "registerNewUser"), user),
                             x -> {
+                                // The user account exists now, but no buyer/supplier profile
+                                // has been created yet — creating one is what unlocks
+                                // My Orders / Payments / Listings after login instead of
+                                // showing "profile not resolved". Resolve the new user's id
+                                // and go straight into the matching profile-creation screen.
                                 create.setDisable(false);
                                 state.setText("");
-                                alert("Account created", "Your account has been created. You can now sign in.");
-                                showWelcome();
+                                role = selectedRole;
+                                currentUserName = name;
+                                currentUserEmail = email;
+
+                                runAsync(() -> invoke("UserService", "getUserByEmail", email),
+                                        createdUser -> {
+                                            currentUserId = extractInt(createdUser, "getUserId");
+                                            if (currentUserId == null) {
+                                                alert("Account created", "Your account has been created. You can now sign in.");
+                                                showWelcome();
+                                                return;
+                                            }
+                                            alert("Account created", "Your account has been created. Let's finish setting up your "
+                                                    + pretty(selectedRole).toLowerCase() + " profile.");
+                                            openShell();
+                                            if (role.equals("BUYER")) showBuyerProfile();
+                                            else showSupplierProfile();
+                                        },
+                                        ex2 -> {
+                                            alert("Account created", "Your account has been created. You can now sign in.");
+                                            showWelcome();
+                                        });
                             },
                             ex -> {
                                 create.setDisable(false);
@@ -494,8 +519,14 @@ public class frontend {
             currentProfileId = extractInt(result, role.equals("BUYER") ? "getBuyerId" : "getSupplierId");
             openShell();
         }, ex -> {
-            // Still open the workspace. Some projects may not yet have a profile for this user.
+            // No profile exists yet for this user (a common state right after
+            // signup, since account creation and profile creation are separate
+            // steps). Don't just leave the workspace stuck on "not resolved" —
+            // open it and route straight to the profile-creation screen so the
+            // user has a way forward.
             openShell();
+            if (role.equals("BUYER")) showBuyerProfile();
+            else if (role.equals("SUPPLIER")) showSupplierProfile();
         });
     }
 
@@ -559,6 +590,7 @@ public class frontend {
             addNav("Deliveries", this::showDeliveries);
             addNav("Admin Logs", this::showAdminLogs);
         } else if (role.equals("BUYER")) {
+            addNav("My Profile", this::showBuyerProfile);
             addNav("Marketplace", this::showMarketplace);
             addNav("My Orders", this::showBuyerOrders);
             addNav("Payments", this::showBuyerPayments);
@@ -636,9 +668,14 @@ public class frontend {
         stats.getChildren().addAll(
                 statCard("Portal", pretty(role), "Active workspace"),
                 statCard("User", currentUserId == null ? "—" : "#" + currentUserId, "Signed-in record"),
-                statCard("Profile", currentProfileId == null ? "—" : "#" + currentProfileId, role + " profile"),
-                statCard("Backend", "Connected", "Service layer enabled")
+                statCard("Profile", currentProfileId == null ? "—" : "#" + currentProfileId, role + " profile")
         );
+        // "Backend Connected" is an internal service-layer diagnostic — only
+        // relevant to admins, so it no longer shows on the buyer/supplier
+        // dashboards.
+        if (role.equals("ADMIN")) {
+            stats.getChildren().add(statCard("Backend", "Connected", "Service layer enabled"));
+        }
 
         VBox welcome = panel("Welcome to FarmersIn", roleMessage());
         box.getChildren().addAll(stats, welcome);
@@ -802,6 +839,67 @@ public class frontend {
         setHeader("My Orders", "Orders placed with your farm or business");
         if (currentProfileId == null) { showMissingProfile("Supplier"); return; }
         simpleServiceTable("OrderService", "getOrdersBySupplierId", currentProfileId);
+    }
+
+    private void showBuyerProfile() {
+        setHeader("My Profile", "View and update your buyer account details");
+        if (currentUserId == null) { showMissingProfile("Buyer"); return; }
+
+        VBox loading = new VBox(12, new Label("Loading profile…"));
+        show(loading);
+
+        runAsync(() -> invoke("buyerprofile", "getBuyerByUserId", currentUserId),
+                result -> {
+                    if (result == null) {
+                        currentProfileId = null;
+                        renderCreateBuyerProfile();
+                    } else {
+                        currentProfileId = extractInt(result, "getBuyerId");
+                        renderBuyerProfileView(result);
+                    }
+                },
+                ex -> {
+                    currentProfileId = null;
+                    renderCreateBuyerProfile();
+                });
+    }
+
+    private void renderCreateBuyerProfile() {
+        VBox root = new VBox(16);
+        VBox info = panel("No buyer profile yet",
+                "Create your buyer profile to start ordering produce. New profiles start as PENDING and need admin approval before you can place orders.");
+        Button create = primaryButton("Create Buyer Profile");
+        create.setOnAction(e -> modelEditor("BuyerProfile", null, obj -> {
+            setIfPossible(obj, "setUserId", currentUserId);
+            runAsync(() -> invoke("buyerprofile", "addBuyerProfile", obj), x -> {
+                toast("Buyer profile created — pending approval", false);
+                showBuyerProfile();
+            }, this::showError);
+        }));
+        root.getChildren().addAll(info, create);
+        show(root);
+    }
+
+    private void renderBuyerProfileView(Object profile) {
+        VBox root = new VBox(16);
+
+        VBox card = new VBox(10);
+        card.setPadding(new Insets(20));
+        card.setStyle(cardStyle());
+        card.setEffect(softShadow());
+        Label title = new Label("Buyer Profile");
+        title.setFont(Font.font("Georgia", FontWeight.BOLD, 18));
+        title.setTextFill(Color.web(INK));
+        card.getChildren().addAll(title, buildDetailGrid(profile));
+
+        Button edit = primaryButton("Edit Profile");
+        edit.setOnAction(e -> modelEditor("BuyerProfile", profile, obj -> runAsync(
+                () -> invoke("buyerprofile", "updateBuyerProfile", obj),
+                x -> { toast("Profile updated", false); showBuyerProfile(); },
+                this::showError)));
+
+        root.getChildren().addAll(card, edit);
+        show(root);
     }
 
     private void showSupplierProfile() {
@@ -1372,7 +1470,24 @@ public class frontend {
 
     private void show(Node node){content.getChildren().setAll(node);}
     private void setHeader(String title,String subtitle){pageTitle.setText(title);pageSubtitle.setText(subtitle);}
-    private void showMissingProfile(String kind){show(panel(kind+" profile not resolved","Enter the portal again with a valid User ID that has an existing "+kind.toLowerCase()+" profile."));}
+
+    private void showMissingProfile(String kind){
+        VBox root = new VBox(14);
+        root.getChildren().add(panel(kind+" profile not resolved","Enter the portal again with a valid User ID that has an existing "+kind.toLowerCase()+" profile."));
+
+        // Buyers and suppliers can now fix this themselves instead of being
+        // stuck: route them straight to the profile-creation screen.
+        if (kind.equalsIgnoreCase("Buyer") && currentUserId != null) {
+            Button go = primaryButton("Create Buyer Profile");
+            go.setOnAction(e -> showBuyerProfile());
+            root.getChildren().add(go);
+        } else if (kind.equalsIgnoreCase("Supplier") && currentUserId != null) {
+            Button go = primaryButton("Create Supplier Profile");
+            go.setOnAction(e -> showSupplierProfile());
+            root.getChildren().add(go);
+        }
+        show(root);
+    }
 
     private Button primaryButton(String text){Button b=new Button(text);b.setStyle("-fx-background-color:"+SOIL_DARK+";-fx-text-fill:"+WHEAT_SOFT+";-fx-font-weight:bold;-fx-padding:10 16;-fx-background-radius:8;-fx-cursor:hand;");
         b.setOnMouseEntered(e->b.setStyle("-fx-background-color:"+BARK+";-fx-text-fill:"+WHEAT_SOFT+";-fx-font-weight:bold;-fx-padding:10 16;-fx-background-radius:8;-fx-cursor:hand;"));
