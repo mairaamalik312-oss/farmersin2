@@ -6,6 +6,8 @@ import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
+import javafx.event.ActionEvent;
+import javafx.event.EventHandler;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -417,7 +419,14 @@ public class frontend {
             create.setDisable(true);
             state.setText("Checking email…");
 
-            runAsync(() -> invoke("UserService", "getUserByEmail", email), existing -> {
+            runAsync(() -> {
+                Object existingUser = null;
+                try {
+                    existingUser = invoke("UserService", "getUserByEmail", email);
+                } catch (Exception ignored) {
+                }
+                return existingUser;
+            }, existing -> {
                 if (existing != null) {
                     create.setDisable(false);
                     state.setText("");
@@ -738,11 +747,9 @@ public class frontend {
             });
             actions.getChildren().add(editRow);
         }
-
         refresh.setOnAction(e -> load.run());
-        approve.setOnAction(e -> updateApproval(table, buyer, "APPROVED", load));
-        reject.setOnAction(e -> updateApproval(table, buyer, "REJECTED", load));
-        box.getChildren().addAll(actions, state, table);
+        approve.setOnAction(e -> updateApproval(table, buyer, "VERIFIED", load));
+        reject.setOnAction(e -> updateApproval(table, buyer, "REJECTED", load));  box.getChildren().addAll(actions, state, table);
         VBox.setVgrow(table, Priority.ALWAYS);
         Platform.runLater(load);
         return box;
@@ -756,7 +763,7 @@ public class frontend {
         if (id == null) { alert("Cannot identify request", "The selected record does not expose " + getter + "()."); return; }
         String service = buyer ? "buyerprofile" : "supplier_profiles";
         runAsync(() -> invoke(service, "updateVerificationStatus", id, status), x -> {
-            toast(status.equals("APPROVED") ? "Request approved" : "Request rejected", false);
+            toast(status.equals("VERIFIED") ? "Request approved" : "Request rejected", false);
             reload.run();
         }, this::showError);
     }
