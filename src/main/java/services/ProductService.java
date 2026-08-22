@@ -9,6 +9,7 @@ import java.util.List;
 public class ProductService {
 
     private final products productDAO;
+    private Product product;
 
     public ProductService() {
         this.productDAO = new products();
@@ -114,14 +115,27 @@ public class ProductService {
         product.setDefaultUnit(
                 unit == null ? null : unit.toUpperCase()
         );
+        product.setSeason(cleanOptional(product.getSeason()));
+
+        if (!product.isSeasonal()) {
+            product.setSeason("All Year");
+        }
     }
 
-    private void validateProductId(int productId) {
+    private void validateProductId(int productId)
+    {
         if (productId <= 0) {
             throw new IllegalArgumentException(
                     "Product ID must be greater than zero."
             );
+
         }
+        if (product.isSeasonal() && isBlank(product.getSeason())) {
+            throw new IllegalArgumentException(
+                    "Season is required for a seasonal product."
+            );
+        }
+
     }
 
     private void validateCategoryId(int categoryId) {

@@ -9,7 +9,9 @@ public class Product {
     private String defaultUnit;
     private String imagePath;
     private boolean isSeasonal;
+    private String season;
     private boolean isActive;
+
 
     // Default Constructor
     public Product() {}
@@ -17,7 +19,7 @@ public class Product {
     // Constructor for creating a new product
     public Product(String productName, int categoryId, Integer subcategoryId,
                    String description, String defaultUnit, String imagePath,
-                   boolean isSeasonal, boolean isActive) {
+                   boolean isSeasonal, String season,boolean isActive) {
         this.productName = productName;
         this.categoryId = categoryId;
         this.subcategoryId = subcategoryId;
@@ -25,13 +27,14 @@ public class Product {
         this.defaultUnit = defaultUnit;
         this.imagePath = imagePath;
         this.isSeasonal = isSeasonal;
+        this.season = season;
         this.isActive = isActive;
     }
 
     // Full Constructor
     public Product(int productId, String productName, int categoryId, Integer subcategoryId,
                    String description, String defaultUnit, String imagePath,
-                   boolean isSeasonal, boolean isActive) {
+                   boolean isSeasonal,String season, boolean isActive) {
         this.productId = productId;
         this.productName = productName;
         this.categoryId = categoryId;
@@ -40,7 +43,15 @@ public class Product {
         this.defaultUnit = defaultUnit;
         this.imagePath = imagePath;
         this.isSeasonal = isSeasonal;
+        this.season = season;
         this.isActive = isActive;
+    }
+    public String getSeason() {
+        return season;
+    }
+
+    public void setSeason(String season) {
+        this.season = season;
     }
 
     // Getters and Setters

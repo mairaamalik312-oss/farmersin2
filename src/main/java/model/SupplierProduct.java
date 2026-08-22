@@ -19,7 +19,8 @@ public class SupplierProduct {
 
     private Date productionOrHarvestDate;
     private Date expiryDate;
-
+    private boolean seasonal;
+    private String season;
     private String listingStatus;
 
     private Timestamp createdAt;
@@ -207,7 +208,21 @@ public class SupplierProduct {
     public void setUpdatedAt(Timestamp updatedAt) {
         this.updatedAt = updatedAt;
     }
+    public boolean isSeasonal() {
+        return seasonal;
+    }
 
+    public void setSeasonal(boolean seasonal) {
+        this.seasonal = seasonal;
+    }
+
+    public String getSeason() {
+        return season;
+    }
+
+    public void setSeason(String season) {
+        this.season = season;
+    }
     // =========================================================
     // OPTIONAL HELPER METHOD
     // =========================================================
